@@ -1,0 +1,149 @@
+<mxfile host="65bd71144e">
+    <diagram id="tradingview-flow" name="TradingView → Lambda → Binance">
+        <mxGraphModel dx="135458" dy="84645" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1400" pageHeight="1000" math="0" shadow="0">
+            <root>
+                <mxCell id="0"/>
+                <mxCell id="1" parent="0"/>
+                <mxCell id="2" style="edgeStyle=none;html=1;exitX=0.75;exitY=1;exitDx=0;exitDy=0;" edge="1" parent="1" source="title">
+                    <mxGeometry relative="1" as="geometry">
+                        <mxPoint x="874.7272727272648" y="80" as="targetPoint"/>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="title" value="Trading Bot PoC — TradingView Integration Flow" style="text;html=1;fontSize=18;fontStyle=1;align=center;fillColor=none;strokeColor=none;fontColor=#333;" parent="1" vertex="1">
+                    <mxGeometry x="350" y="20" width="700" height="30" as="geometry"/>
+                </mxCell>
+                <mxCell id="tv-group" value="TradingView" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#2962FF;fontColor=#FFFFFF;strokeColor=#1565C0;verticalAlign=top;fontStyle=1;fontSize=13;spacingTop=4;container=1;collapsible=0;" parent="1" vertex="1">
+                    <mxGeometry x="40" y="70" width="300" height="560" as="geometry"/>
+                </mxCell>
+                <mxCell id="tv-chart" value="&lt;b&gt;BTCUSDT Chart&lt;/b&gt;&lt;br&gt;Candlestick 15m" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#BBDEFB;strokeColor=#1565C0;fontColor=#000;fontSize=11;" parent="tv-group" vertex="1">
+                    <mxGeometry x="60" y="40" width="180" height="40" as="geometry"/>
+                </mxCell>
+                <mxCell id="tv-pine" value="&lt;b&gt;Pine Script v5&lt;/b&gt;&lt;br&gt;EMA Crossover Strategy" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#BBDEFB;strokeColor=#1565C0;fontColor=#000;fontSize=11;" parent="tv-group" vertex="1">
+                    <mxGeometry x="60" y="105" width="180" height="40" as="geometry"/>
+                </mxCell>
+                <mxCell id="tv-ema" value="&lt;b&gt;Calculate EMAs&lt;/b&gt;&lt;br&gt;Fast(12) &amp; Slow(26)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#BBDEFB;strokeColor=#1565C0;fontColor=#000;fontSize=11;" parent="tv-group" vertex="1">
+                    <mxGeometry x="60" y="170" width="180" height="40" as="geometry"/>
+                </mxCell>
+                <mxCell id="tv-cross" value="Crossover?" style="rhombus;whiteSpace=wrap;html=1;fillColor=#FF9800;strokeColor=#E65100;fontColor=#FFF;fontStyle=1;fontSize=11;" parent="tv-group" vertex="1">
+                    <mxGeometry x="95" y="235" width="110" height="60" as="geometry"/>
+                </mxCell>
+                <mxCell id="tv-buy" value="&lt;b&gt;BUY&lt;/b&gt;&lt;br&gt;ta.crossover()" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#4CAF50;strokeColor=#388E3C;fontColor=#FFF;fontSize=11;" parent="tv-group" vertex="1">
+                    <mxGeometry x="10" y="325" width="120" height="40" as="geometry"/>
+                </mxCell>
+                <mxCell id="tv-sell" value="&lt;b&gt;SELL&lt;/b&gt;&lt;br&gt;ta.crossunder()" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F44336;strokeColor=#D32F2F;fontColor=#FFF;fontSize=11;" parent="tv-group" vertex="1">
+                    <mxGeometry x="170" y="325" width="120" height="40" as="geometry"/>
+                </mxCell>
+                <mxCell id="tv-alert" value="&lt;b&gt;alert()&lt;/b&gt;&lt;br&gt;Build JSON payload" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#BBDEFB;strokeColor=#1565C0;fontColor=#000;fontSize=11;" parent="tv-group" vertex="1">
+                    <mxGeometry x="60" y="400" width="180" height="40" as="geometry"/>
+                </mxCell>
+                <mxCell id="tv-webhook" value="&lt;b&gt;Webhook POST&lt;/b&gt;&lt;br&gt;HTTPS + passphrase" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E3F2FD;strokeColor=#1565C0;fontColor=#000;fontStyle=0;fontSize=11;" parent="tv-group" vertex="1">
+                    <mxGeometry x="60" y="475" width="180" height="45" as="geometry"/>
+                </mxCell>
+                <mxCell id="a1" style="edgeStyle=orthogonalEdgeStyle;strokeColor=#1565C0;" parent="tv-group" source="tv-chart" target="tv-pine" edge="1"/>
+                <mxCell id="a2" style="edgeStyle=orthogonalEdgeStyle;strokeColor=#1565C0;" parent="tv-group" source="tv-pine" target="tv-ema" edge="1"/>
+                <mxCell id="a3" style="edgeStyle=orthogonalEdgeStyle;strokeColor=#1565C0;" parent="tv-group" source="tv-ema" target="tv-cross" edge="1"/>
+                <mxCell id="a4" value="cross over" style="edgeStyle=orthogonalEdgeStyle;fontStyle=0;fontColor=#4CAF50;fontSize=10;strokeColor=#4CAF50;" parent="tv-group" source="tv-cross" target="tv-buy" edge="1"/>
+                <mxCell id="a5" value="cross under" style="edgeStyle=orthogonalEdgeStyle;fontStyle=0;fontColor=#F44336;fontSize=10;strokeColor=#F44336;" parent="tv-group" source="tv-cross" target="tv-sell" edge="1"/>
+                <mxCell id="a6" style="edgeStyle=orthogonalEdgeStyle;strokeColor=#1565C0;" parent="tv-group" source="tv-buy" target="tv-alert" edge="1"/>
+                <mxCell id="a7" style="edgeStyle=orthogonalEdgeStyle;strokeColor=#1565C0;" parent="tv-group" source="tv-sell" target="tv-alert" edge="1"/>
+                <mxCell id="a8" style="edgeStyle=orthogonalEdgeStyle;strokeColor=#1565C0;" parent="tv-group" source="tv-alert" target="tv-webhook" edge="1"/>
+                <mxCell id="a-loop" value="no cross" style="edgeStyle=orthogonalEdgeStyle;fontColor=#999;dashed=1;fontSize=10;strokeColor=#999;exitX=1;exitY=0.5;entryX=1;entryY=0.5;" parent="tv-group" source="tv-cross" target="tv-ema" edge="1">
+                    <mxGeometry relative="1" as="geometry">
+                        <Array as="points">
+                            <mxPoint x="270" y="265"/>
+                            <mxPoint x="270" y="190"/>
+                        </Array>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="aws-group" value="AWS Cloud" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#232F3E;fontColor=#FF9900;strokeColor=#FF9900;verticalAlign=top;fontStyle=1;fontSize=13;spacingTop=4;container=1;collapsible=0;" parent="1" vertex="1">
+                    <mxGeometry x="460" y="70" width="380" height="560" as="geometry"/>
+                </mxCell>
+                <mxCell id="aws-apigw" value="&lt;b&gt;API Gateway&lt;/b&gt; (HTTP API)&lt;br&gt;POST /webhook" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FF9900;strokeColor=#E65100;fontColor=#FFF;fontSize=11;" parent="aws-group" vertex="1">
+                    <mxGeometry x="100" y="40" width="180" height="45" as="geometry"/>
+                </mxCell>
+                <mxCell id="aws-mangum" value="&lt;b&gt;Mangum&lt;/b&gt; (ASGI Adapter)&lt;br&gt;Lambda event → FastAPI" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#37474F;strokeColor=#263238;fontColor=#FFF;fontSize=11;" parent="aws-group" vertex="1">
+                    <mxGeometry x="100" y="115" width="180" height="45" as="geometry"/>
+                </mxCell>
+                <mxCell id="aws-auth" value="Passphrase&lt;br&gt;Valid?" style="rhombus;whiteSpace=wrap;html=1;fillColor=#FF9800;strokeColor=#E65100;fontColor=#FFF;fontStyle=1;fontSize=11;" parent="aws-group" vertex="1">
+                    <mxGeometry x="135" y="190" width="110" height="60" as="geometry"/>
+                </mxCell>
+                <mxCell id="aws-reject" value="&lt;b&gt;401&lt;/b&gt; Unauthorized" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#D32F2F;strokeColor=#B71C1C;fontColor=#FFF;fontSize=11;" parent="aws-group" vertex="1">
+                    <mxGeometry x="10" y="205" width="100" height="30" as="geometry"/>
+                </mxCell>
+                <mxCell id="aws-validate" value="&lt;b&gt;Pydantic Validate&lt;/b&gt;&lt;br&gt;action ∈ {BUY, SELL}&lt;br&gt;price &gt; 0" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#37474F;strokeColor=#263238;fontColor=#FFF;fontSize=11;" parent="aws-group" vertex="1">
+                    <mxGeometry x="100" y="280" width="180" height="50" as="geometry"/>
+                </mxCell>
+                <mxCell id="aws-route" value="action?" style="rhombus;whiteSpace=wrap;html=1;fillColor=#FF9800;strokeColor=#E65100;fontColor=#FFF;fontStyle=1;fontSize=11;" parent="aws-group" vertex="1">
+                    <mxGeometry x="135" y="360" width="110" height="60" as="geometry"/>
+                </mxCell>
+                <mxCell id="aws-buy" value="&lt;b&gt;place_market_buy()&lt;/b&gt;&lt;br&gt;10 USDT" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#4CAF50;strokeColor=#388E3C;fontColor=#FFF;fontSize=11;" parent="aws-group" vertex="1">
+                    <mxGeometry x="10" y="455" width="150" height="40" as="geometry"/>
+                </mxCell>
+                <mxCell id="aws-sell" value="&lt;b&gt;place_market_sell()&lt;/b&gt;&lt;br&gt;quantity" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F44336;strokeColor=#D32F2F;fontColor=#FFF;fontSize=11;" parent="aws-group" vertex="1">
+                    <mxGeometry x="220" y="455" width="150" height="40" as="geometry"/>
+                </mxCell>
+                <mxCell id="aws-cw" value="CloudWatch Logs (JSON)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#546E7A;strokeColor=#37474F;fontColor=#FFF;fontSize=10;dashed=1;dashPattern=8 4;" parent="aws-group" vertex="1">
+                    <mxGeometry x="110" y="520" width="160" height="25" as="geometry"/>
+                </mxCell>
+                <mxCell id="b1" style="edgeStyle=orthogonalEdgeStyle;strokeColor=#FF9900;" parent="aws-group" source="aws-apigw" target="aws-mangum" edge="1"/>
+                <mxCell id="b2" style="edgeStyle=orthogonalEdgeStyle;strokeColor=#FF9900;" parent="aws-group" source="aws-mangum" target="aws-auth" edge="1"/>
+                <mxCell id="b3" value="No" style="edgeStyle=orthogonalEdgeStyle;fontColor=#D32F2F;fontStyle=1;fontSize=10;strokeColor=#D32F2F;" parent="aws-group" source="aws-auth" target="aws-reject" edge="1"/>
+                <mxCell id="b4" value="Yes" style="edgeStyle=orthogonalEdgeStyle;fontColor=#4CAF50;fontStyle=1;fontSize=10;strokeColor=#4CAF50;" parent="aws-group" source="aws-auth" target="aws-validate" edge="1"/>
+                <mxCell id="b5" style="edgeStyle=orthogonalEdgeStyle;strokeColor=#FF9900;" parent="aws-group" source="aws-validate" target="aws-route" edge="1"/>
+                <mxCell id="b6" value="BUY" style="edgeStyle=orthogonalEdgeStyle;fontColor=#4CAF50;fontStyle=1;fontSize=10;strokeColor=#4CAF50;" parent="aws-group" source="aws-route" target="aws-buy" edge="1"/>
+                <mxCell id="b7" value="SELL" style="edgeStyle=orthogonalEdgeStyle;fontColor=#F44336;fontStyle=1;fontSize=10;strokeColor=#F44336;" parent="aws-group" source="aws-route" target="aws-sell" edge="1"/>
+                <mxCell id="b8" style="dashed=1;strokeColor=#546E7A;" parent="aws-group" source="aws-validate" target="aws-cw" edge="1"/>
+                <mxCell id="bn-group" value="Binance Exchange" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F0B90B;fontColor=#000;strokeColor=#C99700;verticalAlign=top;fontStyle=1;fontSize=13;spacingTop=4;container=1;collapsible=0;" parent="1" vertex="1">
+                    <mxGeometry x="960" y="70" width="260" height="560" as="geometry"/>
+                </mxCell>
+                <mxCell id="bn-api" value="&lt;b&gt;Binance API&lt;/b&gt;&lt;br&gt;python-binance SDK" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF8E1;strokeColor=#C99700;fontColor=#000;fontSize=11;" parent="bn-group" vertex="1">
+                    <mxGeometry x="30" y="160" width="200" height="45" as="geometry"/>
+                </mxCell>
+                <mxCell id="bn-orderbook" value="&lt;b&gt;Order Book&lt;/b&gt;&lt;br&gt;Market Order Matched" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF8E1;strokeColor=#C99700;fontColor=#000;fontSize=11;" parent="bn-group" vertex="1">
+                    <mxGeometry x="30" y="250" width="200" height="45" as="geometry"/>
+                </mxCell>
+                <mxCell id="bn-confirm" value="&lt;b&gt;Confirmation&lt;/b&gt;&lt;br&gt;{orderId, status: FILLED}" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF8E1;strokeColor=#C99700;fontColor=#000;fontSize=11;" parent="bn-group" vertex="1">
+                    <mxGeometry x="30" y="340" width="200" height="45" as="geometry"/>
+                </mxCell>
+                <mxCell id="c1" style="edgeStyle=orthogonalEdgeStyle;strokeColor=#C99700;" parent="bn-group" source="bn-api" target="bn-orderbook" edge="1"/>
+                <mxCell id="c2" style="edgeStyle=orthogonalEdgeStyle;strokeColor=#C99700;" parent="bn-group" source="bn-orderbook" target="bn-confirm" edge="1"/>
+                <mxCell id="x1" value="HTTPS POST" style="edgeStyle=orthogonalEdgeStyle;strokeWidth=2;strokeColor=#FF9900;fontStyle=1;fontSize=11;fontColor=#FF9900;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" parent="1" source="tv-webhook" target="aws-apigw" edge="1">
+                    <mxGeometry relative="1" as="geometry">
+                        <Array as="points">
+                            <mxPoint x="420" y="568"/>
+                            <mxPoint x="420" y="133"/>
+                        </Array>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="x2" value="" style="edgeStyle=orthogonalEdgeStyle;strokeWidth=2;strokeColor=#4CAF50;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" parent="1" source="aws-buy" target="bn-api" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="x3" value="" style="edgeStyle=orthogonalEdgeStyle;strokeWidth=2;strokeColor=#F44336;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" parent="1" source="aws-sell" target="bn-api" edge="1">
+                    <mxGeometry relative="1" as="geometry">
+                        <Array as="points">
+                            <mxPoint x="920" y="545"/>
+                            <mxPoint x="920" y="253"/>
+                        </Array>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="x4" value="200 OK" style="edgeStyle=orthogonalEdgeStyle;strokeWidth=1;strokeColor=#999;dashed=1;fontColor=#999;fontSize=10;exitX=0;exitY=0.5;entryX=1;entryY=0.5;" parent="1" source="bn-confirm" target="aws-route" edge="1">
+                    <mxGeometry relative="1" as="geometry">
+                        <Array as="points">
+                            <mxPoint x="940" y="483"/>
+                            <mxPoint x="940" y="460"/>
+                        </Array>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="payload-box" value="&lt;b&gt;Webhook Payload&lt;/b&gt;&lt;hr size=&quot;1&quot;&gt;&lt;div style=&quot;text-align:left;font-size:10px;font-family:monospace;&quot;&gt;{&lt;br&gt;  &quot;passphrase&quot;: &quot;secret&quot;,&lt;br&gt;  &quot;action&quot;: &quot;BUY&quot;,&lt;br&gt;  &quot;symbol&quot;: &quot;BTCUSDT&quot;,&lt;br&gt;  &quot;price&quot;: 67500.00,&lt;br&gt;  &quot;timestamp&quot;: &quot;2026-03...&quot;&lt;br&gt;}&lt;/div&gt;" style="shape=note;whiteSpace=wrap;html=1;fillColor=#FFFDE7;strokeColor=#C99700;fontColor=#000;size=14;align=center;fontSize=11;" parent="1" vertex="1">
+                    <mxGeometry x="40" y="680" width="210" height="150" as="geometry"/>
+                </mxCell>
+                <mxCell id="response-box" value="&lt;b&gt;Response&lt;/b&gt;&lt;hr size=&quot;1&quot;&gt;&lt;div style=&quot;text-align:left;font-size:10px;font-family:monospace;&quot;&gt;{&lt;br&gt;  &quot;status&quot;: &quot;executed&quot;,&lt;br&gt;  &quot;action&quot;: &quot;BUY&quot;,&lt;br&gt;  &quot;symbol&quot;: &quot;BTCUSDT&quot;,&lt;br&gt;  &quot;detail&quot;: &quot;orderId=123&quot;&lt;br&gt;}&lt;/div&gt;" style="shape=note;whiteSpace=wrap;html=1;fillColor=#E8F5E9;strokeColor=#388E3C;fontColor=#000;size=14;align=center;fontSize=11;" parent="1" vertex="1">
+                    <mxGeometry x="960" y="680" width="210" height="140" as="geometry"/>
+                </mxCell>
+                <mxCell id="legend" value="&lt;div style=&quot;text-align:left;font-size:10px;&quot;&gt;&lt;b&gt;Legend&lt;/b&gt;&lt;br&gt;🟢 BUY path&lt;br&gt;🔴 SELL path&lt;br&gt;🟠 Decision point&lt;br&gt;--- Async / logging&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F5F5F5;strokeColor=#CCC;fontColor=#333;fontSize=10;align=left;spacingLeft=8;" parent="1" vertex="1">
+                    <mxGeometry x="310" y="700" width="120" height="90" as="geometry"/>
+                </mxCell>
+            </root>
+        </mxGraphModel>
+    </diagram>
+</mxfile>

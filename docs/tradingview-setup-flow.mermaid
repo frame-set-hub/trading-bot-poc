@@ -1,0 +1,63 @@
+%% ============================================================
+%% TradingView Setup Flow — Step-by-step how to connect
+%% ============================================================
+
+%% --- 2. Sequence Diagram: What happens when a signal fires ---
+
+sequenceDiagram
+    autonumber
+
+    participant Chart as TradingView Chart
+    participant Pine as Pine Script Engine
+    participant Alert as TradingView Alert System
+    participant APIGW as API Gateway (HTTPS)
+    participant Lambda as Lambda (FastAPI)
+    participant Security as security.py
+    participant Schema as schemas.py (Pydantic)
+    participant Binance as Binance API
+
+    Note over Chart: BTCUSDT 15m candle closes
+
+    Chart->>Pine: New candle data (OHLCV)
+    Pine->>Pine: Calculate EMA(12) & EMA(26)
+
+    alt Fast EMA crosses ABOVE Slow EMA
+        Pine->>Alert: ta.crossover detected → alert()
+        Note over Alert: Build JSON payload:<br/>{action: "BUY", symbol: "BTCUSDT",<br/>price: 67500, timestamp: "..."}
+    else Fast EMA crosses BELOW Slow EMA
+        Pine->>Alert: ta.crossunder detected → alert()
+        Note over Alert: Build JSON payload:<br/>{action: "SELL", symbol: "BTCUSDT",<br/>price: 68000, timestamp: "..."}
+    end
+
+    Alert->>APIGW: HTTPS POST /webhook (JSON + passphrase)
+    Note over Alert,APIGW: Webhook URL:<br/>https://abc123.execute-api<br/>.ap-southeast-1.amazonaws.com/webhook
+
+    APIGW->>Lambda: Proxy Integration (event)
+    Note over Lambda: Mangum converts<br/>Lambda event → ASGI request
+
+    Lambda->>Security: verify_passphrase(payload.passphrase)
+    Security->>Security: hmac.compare_digest()
+
+    alt Invalid passphrase
+        Security-->>Lambda: False
+        Lambda-->>APIGW: 401 Unauthorized
+        APIGW-->>Alert: 401
+        Note over Alert: Alert delivery failed<br/>(TradingView shows error)
+    else Valid passphrase
+        Security-->>Lambda: True
+        Lambda->>Schema: WebhookPayload(**payload)
+        Schema->>Schema: Validate: action ∈ {BUY,SELL}<br/>price > 0, symbol required
+
+        alt action == "BUY"
+            Lambda->>Binance: order_market_buy(symbol, quoteOrderQty=10 USDT)
+            Binance-->>Lambda: {orderId: 12345, status: "FILLED", fills: [...]}
+            Lambda-->>APIGW: 200 {status: "executed", action: "BUY", orderId: 12345}
+        else action == "SELL"
+            Lambda->>Binance: order_market_sell(symbol, quantity)
+            Binance-->>Lambda: {orderId: 12346, status: "FILLED", fills: [...]}
+            Lambda-->>APIGW: 200 {status: "executed", action: "SELL", orderId: 12346}
+        end
+
+        APIGW-->>Alert: 200 OK
+        Note over Alert: Alert delivered successfully
+    end

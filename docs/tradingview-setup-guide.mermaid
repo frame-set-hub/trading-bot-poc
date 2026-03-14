@@ -1,0 +1,36 @@
+%% ============================================================
+%% TradingView Setup Guide — How to configure the connection
+%% ============================================================
+
+%% --- 3. Setup Steps: How to connect TradingView to our bot ---
+
+flowchart LR
+    subgraph STEP1 ["Step 1: Deploy Backend"]
+        S1A["sam build"] --> S1B["sam deploy --guided"]
+        S1B --> S1C["Get API endpoint URL\nhttps://abc123.execute-api\n.region.amazonaws.com"]
+    end
+
+    subgraph STEP2 ["Step 2: Add Pine Script"]
+        S2A["Open TradingView\nBTCUSDT chart"] --> S2B["Pine Editor\nPaste strategy.pine"]
+        S2B --> S2C["Add to Chart\n(compile & run)"]
+        S2C --> S2D["Verify EMA lines\n& signals on chart"]
+    end
+
+    subgraph STEP3 ["Step 3: Create Alert"]
+        S3A["Click 'Alerts' button\n(alarm icon)"] --> S3B["Condition:\nEMA Crossover Strategy"]
+        S3B --> S3C["Enable\n'Webhook URL'"]
+        S3C --> S3D["Paste endpoint URL\n+ /webhook path"]
+        S3D --> S3E["Alert Message:\n(auto from alert())"]
+    end
+
+    subgraph STEP4 ["Step 4: Verify"]
+        S4A["Wait for\nEMA crossover"] --> S4B["Check CloudWatch\nLogs for request"]
+        S4B --> S4C["Check Binance\nOrder History"]
+    end
+
+    STEP1 ==> STEP2 ==> STEP3 ==> STEP4
+
+    style STEP1 fill:#232F3E,color:#fff,stroke:#FF9900
+    style STEP2 fill:#2962FF,color:#fff,stroke:#1565C0
+    style STEP3 fill:#2962FF,color:#fff,stroke:#1565C0
+    style STEP4 fill:#4CAF50,color:#fff,stroke:#388E3C
