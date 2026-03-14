@@ -5,24 +5,24 @@
 ```mermaid
 flowchart TB
     subgraph TV ["TradingView"]
-        CHART["BTCUSDT Chart"] --> PINE["Pine Script v5\nEMA Crossover"]
+        CHART["BTCUSDT Chart"] --> PINE["Pine Script v5 - EMA Crossover"]
         PINE --> EMA["Calculate EMA 12 & 26"]
         EMA --> CHECK{"Crossover?"}
         CHECK -- "cross over" --> BUY["BUY Signal"]
         CHECK -- "cross under" --> SELL["SELL Signal"]
         CHECK -. "no cross" .-> EMA
-        BUY --> ALERT["alert&#40;&#41; → JSON"]
+        BUY --> ALERT["alert - Build JSON"]
         SELL --> ALERT
         ALERT --> HOOK["Webhook POST"]
     end
 
     subgraph AWS ["AWS Cloud"]
-        GW["API Gateway"] --> FN["Lambda\nFastAPI + Mangum"]
+        GW["API Gateway"] --> FN["Lambda - FastAPI + Mangum"]
         FN --> AUTH{"Passphrase?"}
         AUTH -- "invalid" --> DENY["401"]
         AUTH -- "valid" --> VAL["Pydantic Validate"]
         VAL --> ACT{"BUY / SELL?"}
-        ACT -- "BUY" --> MBUY["place_market_buy\n10 USDT"]
+        ACT -- "BUY" --> MBUY["place_market_buy - 10 USDT"]
         ACT -- "SELL" --> MSELL["place_market_sell"]
         FN -. "logs" .-> CW["CloudWatch"]
     end
@@ -91,23 +91,23 @@ sequenceDiagram
 ```mermaid
 flowchart LR
     subgraph S1 ["1 - Deploy"]
-        A1["sam build"] --> A2["sam deploy\n--guided"]
-        A2 --> A3["Copy API\nendpoint URL"]
+        A1["sam build"] --> A2["sam deploy --guided"]
+        A2 --> A3["Copy API endpoint URL"]
     end
 
     subgraph S2 ["2 - Pine Script"]
-        B1["Open chart\nBTCUSDT"] --> B2["Paste\nstrategy.pine"]
+        B1["Open BTCUSDT chart"] --> B2["Paste strategy.pine"]
         B2 --> B3["Add to Chart"]
     end
 
     subgraph S3 ["3 - Create Alert"]
         C1["New Alert"] --> C2["Enable Webhook"]
-        C2 --> C3["Paste URL\n+ /webhook"]
+        C2 --> C3["Paste URL + /webhook"]
     end
 
     subgraph S4 ["4 - Verify"]
-        D1["Wait for\ncrossover"] --> D2["Check\nCloudWatch"]
-        D2 --> D3["Check Binance\norder history"]
+        D1["Wait for crossover"] --> D2["Check CloudWatch"]
+        D2 --> D3["Check Binance orders"]
     end
 
     S1 ==> S2 ==> S3 ==> S4
