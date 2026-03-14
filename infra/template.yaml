@@ -1,0 +1,78 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: Trading Bot PoC — EMA Crossover signals from TradingView to Binance via Lambda
+
+# ─── Parameters ──────────────────────────────────────────
+Parameters:
+  BinanceApiKey:
+    Type: String
+    NoEcho: true
+    Description: Binance API Key (stored encrypted, never logged)
+
+  BinanceApiSecret:
+    Type: String
+    NoEcho: true
+    Description: Binance API Secret (stored encrypted, never logged)
+
+  WebhookPassphrase:
+    Type: String
+    NoEcho: true
+    Description: Shared secret between TradingView and this endpoint
+
+  BinanceTestnet:
+    Type: String
+    Default: "True"
+    AllowedValues: ["True", "False"]
+    Description: Use Binance testnet (True) or production (False)
+
+  TradeQuantityUsdt:
+    Type: String
+    Default: "10.0"
+    Description: Default USDT amount per trade
+
+# ─── Globals ─────────────────────────────────────────────
+Globals:
+  Function:
+    Timeout: 30
+    MemorySize: 256
+    Runtime: python3.11
+
+# ─── Resources ───────────────────────────────────────────
+Resources:
+  TradingBotFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: trading-bot
+      Handler: src.main.handler
+      CodeUri: ../
+      Architectures:
+        - x86_64
+      Environment:
+        Variables:
+          BINANCE_API_KEY: !Ref BinanceApiKey
+          BINANCE_API_SECRET: !Ref BinanceApiSecret
+          WEBHOOK_PASSPHRASE: !Ref WebhookPassphrase
+          BINANCE_TESTNET: !Ref BinanceTestnet
+          TRADE_QUANTITY_USDT: !Ref TradeQuantityUsdt
+          TRADE_SYMBOL: "BTCUSDT"
+      Events:
+        WebhookPost:
+          Type: HttpApi
+          Properties:
+            Path: /webhook
+            Method: POST
+        HealthGet:
+          Type: HttpApi
+          Properties:
+            Path: /health
+            Method: GET
+
+# ─── Outputs ─────────────────────────────────────────────
+Outputs:
+  ApiEndpoint:
+    Description: API Gateway endpoint URL
+    Value: !Sub "https://${ServerlessHttpApi}.execute-api.${AWS::Region}.amazonaws.com"
+
+  FunctionArn:
+    Description: Lambda function ARN
+    Value: !GetAtt TradingBotFunction.Arn

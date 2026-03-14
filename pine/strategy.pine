@@ -1,0 +1,39 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © trading-bot-poc
+
+//@version=5
+strategy("EMA Crossover Strategy", overlay=true, default_qty_type=strategy.percent_of_equity, default_qty_value=100)
+
+// ─── Inputs ───────────────────────────────────────────────
+fastLength = input.int(12, title="Fast EMA Length", minval=1)
+slowLength = input.int(26, title="Slow EMA Length", minval=1)
+
+// ─── EMA Calculation ──────────────────────────────────────
+fastEMA = ta.ema(close, fastLength)
+slowEMA = ta.ema(close, slowLength)
+
+// ─── Crossover Conditions ─────────────────────────────────
+longCondition  = ta.crossover(fastEMA, slowEMA)
+shortCondition = ta.crossunder(fastEMA, slowEMA)
+
+// ─── Strategy Execution ──────────────────────────────────
+if longCondition
+    strategy.entry("Long", strategy.long)
+
+if shortCondition
+    strategy.close("Long")
+
+// ─── Webhook Alerts ──────────────────────────────────────
+if longCondition
+    alert('{"action": "BUY", "symbol": "BTCUSDT", "price": ' + str.tostring(close) + ', "timestamp": "' + str.tostring(timenow) + '"}', alert.freq_once_per_bar_close)
+
+if shortCondition
+    alert('{"action": "SELL", "symbol": "BTCUSDT", "price": ' + str.tostring(close) + ', "timestamp": "' + str.tostring(timenow) + '"}', alert.freq_once_per_bar_close)
+
+// ─── Plot EMAs ───────────────────────────────────────────
+plot(fastEMA, color=color.new(color.green, 0), linewidth=2, title="Fast EMA (12)")
+plot(slowEMA, color=color.new(color.red, 0), linewidth=2, title="Slow EMA (26)")
+
+// ─── Visual Signals ─────────────────────────────────────
+plotshape(longCondition, title="Buy Signal", location=location.belowbar, style=shape.triangleup, size=size.small, color=color.green)
+plotshape(shortCondition, title="Sell Signal", location=location.abovebar, style=shape.triangledown, size=size.small, color=color.red)
