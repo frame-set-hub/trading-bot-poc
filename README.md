@@ -88,7 +88,10 @@ trading-bot-poc/
 │       ├── logger.py          # Structured logging (JSON for CloudWatch)
 │       └── security.py        # Webhook authentication (passphrase validation)
 ├── pine/
-│   └── strategy.pine          # TradingView Pine Script v5 (EMA Crossover)
+│   ├── ema-12-26-strategy.pine     # EMA 12/26 Crossover strategy
+│   ├── rsi_stoch_state.pine       # RSI+Stoch Trend & Fibo (overlay=true, กราฟหลัก)
+│   ├── rsi_stoch_indicator.pine   # RSI+Stoch Indicator (overlay=false, pane ด้านล่าง)
+│   └── rsi_stoch_strategy.pine   # RSI+Stoch Strategy — backtest with Strategy Report
 ├── infra/
 │   └── template.yaml          # AWS SAM template (Lambda + API Gateway)
 └── tests/
@@ -352,6 +355,192 @@ trading-bot-poc/
 
 ---
 
+## Pine Script: RSI+Stoch Pro Indicator
+
+`pine/rsi_stoch_state.pine` — a 7-module indicator built on RSI + Stochastic that identifies trend structure, Fibonacci targets, divergence signals, multi-timeframe confluence, and entry/exit management.
+
+### 3-File Architecture
+
+The RSI+Stoch system is split into 3 files due to Pine Script's overlay limitation (a single script can only draw on the price chart OR a separate pane, not both):
+
+```
+┌──────────────────────────────────────────────────────────────────────┐
+│  rsi_stoch_state.pine (overlay=true — กราฟหลัก)                      │
+│  ┌────────────────────────────────────────────────────────────────┐  │
+│  │  Modules 1-4, 6-7: State → Zones → Trends → Fibo → MTF →    │  │
+│  │  Entry/Exit with BUY/SELL labels, SL lines, trailing stop     │  │
+│  │  Draws: Support/Resistance lines, Fibo levels, trade labels   │  │
+│  └────────────────────────────────────────────────────────────────┘  │
+├──────────────────────────────────────────────────────────────────────┤
+│  rsi_stoch_indicator.pine (overlay=false — oscillator pane)          │
+│  ┌────────────────────────────────────────────────────────────────┐  │
+│  │  RSI + Stoch lines, zone backgrounds, RSI Divergence (Mod 5)  │  │
+│  │  Draws: %K/%D, RSI, RSI MA, OVB/OVS zones, Div lines/labels  │  │
+│  └────────────────────────────────────────────────────────────────┘  │
+├──────────────────────────────────────────────────────────────────────┤
+│  rsi_stoch_strategy.pine (strategy — backtest & Strategy Report)     │
+│  ┌────────────────────────────────────────────────────────────────┐  │
+│  │  Same logic as state.pine + strategy.entry/exit integration   │  │
+│  │  TP1 = Fibo 1.618, TP2 = Fibo 2.618, SL = entry candle H/L  │  │
+│  │  Generates: P&L, Equity Curve, Win Rate, Trade List           │  │
+│  └────────────────────────────────────────────────────────────────┘  │
+└──────────────────────────────────────────────────────────────────────┘
+```
+
+**Usage:** Add `rsi_stoch_state.pine` + `rsi_stoch_indicator.pine` together on a chart for live analysis. Use `rsi_stoch_strategy.pine` separately to run backtests and view the TradingView Strategy Report.
+
+### Module Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                    RSI + Stoch Pro — Module Flow                      │
+│                                                                     │
+│  ┌───────────────────────────────────────────────────────────────┐  │
+│  │  MODULE 1: State Tracking                                     │  │
+│  │  ┌──────────────────┐   ┌──────────────────┐                  │  │
+│  │  │ Stoch OVB/OVS    │   │ RSI OVB/OVS      │                 │  │
+│  │  │ Zone detection   │   │ Zone detection    │                 │  │
+│  │  │ Cycle High/Low   │   │ (Reset trigger)   │                 │  │
+│  │  └────────┬─────────┘   └────────┬──────────┘                 │  │
+│  └───────────┼──────────────────────┼────────────────────────────┘  │
+│              │                      │                                │
+│              ▼                      ▼                                │
+│  ┌───────────────────────────────────────────────────────────────┐  │
+│  │  MODULE 2: Base Zone (กรอบปรับฐาน)                            │  │
+│  │                                                               │  │
+│  │  Stoch exits OVS ──▶ Resistance = prev OVB High              │  │
+│  │  Stoch exits OVB ──▶ Support    = prev OVS Low               │  │
+│  │                                                               │  │
+│  │  RSI enters OVB/OVS ──▶ "ตัดภูเขา" Reset ทุกอย่าง            │  │
+│  └─────────────────────────────┬─────────────────────────────────┘  │
+│                                │                                     │
+│                                ▼                                     │
+│  ┌───────────────────────────────────────────────────────────────┐  │
+│  │  MODULE 3: Trend Recognition                                  │  │
+│  │                                                               │  │
+│  │  %K breaks Resistance ──▶ Breakout UP                        │  │
+│  │  %K breaks Support    ──▶ Breakout DOWN                      │  │
+│  │                                                               │  │
+│  │  Has Higher Low / Lower High in zone?                        │  │
+│  │     YES ──▶ PERFECT Trend                                    │  │
+│  │     NO  ──▶ V-SHAPE Trend                                    │  │
+│  └─────────────────────────────┬─────────────────────────────────┘  │
+│                                │                                     │
+│                                ▼                                     │
+│  ┌───────────────────────────────────────────────────────────────┐  │
+│  │  MODULE 4: Fibonacci Targets & Invalidation                   │  │
+│  │                                                               │  │
+│  │  Fibo Head (0.0) = กรอบที่ไม่ถูกเบรก                          │  │
+│  │  Fibo End  (1.0) = กรอบที่ถูกเบรก                             │  │
+│  │                                                               │  │
+│  │  Levels: 0.618 │ 1.618 │ 2.0 │ 2.618 │ 4.236               │  │
+│  │                                                               │  │
+│  │  Invalidation:                                                │  │
+│  │    %K reverses past Fibo Head ──▶ Trend destroyed            │  │
+│  │    V-Shape: reverses before 1.618 ──▶ Trend destroyed        │  │
+│  └─────────────────────────────┬─────────────────────────────────┘  │
+│                                │                                     │
+│              ┌─────────────────┼──────────────────┐                  │
+│              ▼                                    ▼                  │
+│  ┌────────────────────────┐  ┌────────────────────────────────────┐ │
+│  │  MODULE 5: Divergence  │  │  MODULE 6: MTF Fibo Cluster        │ │
+│  │                        │  │                                    │ │
+│  │  Price LL + RSI HL     │  │  request.security() ──▶ HTF Stoch │ │
+│  │  = Bullish Div         │  │                                    │ │
+│  │  "Stoch > OVB 1 รอบ"   │  │  HTF Fibo 1.618 / 2.618          │ │
+│  │                        │  │  vs Current TF Fibo               │ │
+│  │  Price HH + RSI LH    │  │                                    │ │
+│  │  = Bearish Div         │  │  Match within threshold?          │ │
+│  │  "Stoch > OVS 1 รอบ"   │  │  YES ──▶ GOLD line (Cluster)     │ │
+│  │                        │  │  NO  ──▶ Normal color             │ │
+│  └────────────────────────┘  └────────────────────────────────────┘ │
+│                                │                                     │
+│                                ▼                                     │
+│  ┌───────────────────────────────────────────────────────────────┐  │
+│  │  MODULE 7: Entry Trigger & Risk Management                    │  │
+│  │                                                               │  │
+│  │  Candlestick Reversal:                                        │  │
+│  │    Pin Bar / Engulfing at support/resistance                  │  │
+│  │                                                               │  │
+│  │  Trade Entry: BUY/SELL labels on chart                        │  │
+│  │  Stop Loss: Entry candle High/Low                             │  │
+│  │  Trailing Stop: ATR-based (1.5x ATR, 14-period)              │  │
+│  │                                                               │  │
+│  │  Strategy version adds:                                       │  │
+│  │    TP1 = Fibo 1.618 (50%) │ TP2 = Fibo 2.618 (50%)          │  │
+│  │    strategy.entry() / strategy.exit() with split qty          │  │
+│  └───────────────────────────────────────────────────────────────┘  │
+│                                                                     │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+### Data Dependencies
+
+```
+State Tracking (1) ──▶ Base Zone (2) ──▶ Trend Recognition (3) ──▶ Fibo Targets (4)
+                                                                        │
+RSI Pivots ────────────────────────▶ Divergence (5)                     │
+                                                                        │
+HTF Stoch (request.security) ──────────────────────────▶ MTF Cluster (6)
+                                                                        │
+Candlestick + ATR ─────────────────────────────────────▶ Entry/Exit (7)
+```
+
+### Key Concepts
+
+| Concept | Description |
+|---|---|
+| **OVB / OVS** | Stoch > 80 = Overbought, Stoch < 20 = Oversold |
+| **กรอบปรับฐาน** | Support/Resistance built from completed Stoch cycles |
+| **ตัดภูเขา** | RSI entering OVB/OVS resets all zones and trends |
+| **Perfect Trend** | Breakout with Higher Low (up) or Lower High (down) in zone |
+| **V-Shape Trend** | Breakout without structural confirmation — stricter invalidation |
+| **Fibo Head** | The unbroken zone line — if %K crosses back, trend is invalidated |
+| **Fibo Cluster** | Current TF Fibo aligns with HTF Fibo within threshold — high significance zone |
+
+### Visual Elements
+
+| Element | Color | Meaning |
+|---|---|---|
+| Stoch %K / %D | Green / Red | Stochastic oscillator lines |
+| RSI / RSI MA | White / Yellow | RSI and its moving average |
+| Resistance line | Red | Base zone upper bound |
+| Support line | Green | Base zone lower bound |
+| PERFECT label | Lime (up) / Orange (down) | Structural breakout confirmed |
+| V-SHAPE label | Aqua (up) / Fuchsia (down) | Fast breakout without structure |
+| Fibo 1.618 | Orange dashed | First outer target |
+| Fibo 2.618 | Red dashed | Extended target |
+| Fibo 4.236 | Purple dashed | Maximum extension |
+| **CLUSTER** | **Gold solid (thick)** | **MTF confluence — high significance** |
+| BULL/BEAR DIV | Green/Red line + label | RSI divergence with Stoch prediction |
+| BUY label | Green ▲ | Long entry triggered |
+| SELL label | Red ▼ | Short entry triggered |
+| SL line | Red dashed | Stop loss level |
+| INVALIDATED | Gray X | Trend destroyed |
+| Background | Red/Green tint | Stoch currently in OVB/OVS zone |
+
+### Settings (Inputs)
+
+| Group | Parameter | Default |
+|---|---|---|
+| RSI | Length / MA Length | 14 / 14 |
+| Stochastic | %K / %D / Smoothing | 9 / 3 / 3 |
+| Zone | Stoch OVB/OVS, RSI OVB/OVS | 80/20, 70/30 |
+| Divergence | Pivot Lookback L/R | 5 / 5 |
+| MTF Cluster | Auto-detect HTF, Manual TF, Threshold | true, 60, 3.0 |
+| Entry | ATR Length, ATR Multiplier | 14, 1.5 |
+| Strategy | Direction (Long/Short/Both), Use TP2, TP1 Split % | Both, true, 50 |
+| Strategy | Initial Capital, Commission | 100,000, 0.1% |
+
+### Known Limitations & Testing Notes
+
+- **Step 6 (MTF Cluster)** is the most complex module — HTF state tracking uses simplified logic compared to the current TF. Edge cases may occur when the HTF has insufficient data or when the chart TF doesn't map cleanly to a higher TF.
+- **Fibo levels operate on price** (post-fix). Base zones use `high`/`low` from completed Stoch cycles, not Stoch values.
+- **Label/line limits**: TradingView has a max of ~500 labels and ~500 lines per indicator. Long backtests with many signals may hit this limit.
+- **`request.security` repainting**: The HTF data uses `barmerge.lookahead_off` to avoid repainting, but transitions between timeframes may still show brief inconsistencies on real-time bars.
+
+---
+
 ## Architecture Trade-offs
 
 ### 1. AWS Lambda (Serverless / Event-Driven) - [Chosen for this PoC]
@@ -384,5 +573,9 @@ aws cloudformation delete-stack --stack-name trading-bot
 
 - **2026-03-14**: Added AWS SAM deployment template (`infra/template.yaml`) with HTTP API Gateway and secure parameter handling.
 - **2026-03-14**: Built FastAPI backend — webhook endpoint, Binance integration, Mangum handler, Pydantic schemas, structured logging, passphrase auth.
-- **2026-03-14**: Added Pine Script v5 EMA Crossover strategy (`pine/strategy.pine`) with webhook alerts.
+- **2026-03-15**: Added RSI+Stoch Strategy backtest version (`pine/rsi_stoch_strategy.pine`) — TP1/TP2 Fibo targets, split position exits, TradingView Strategy Report.
+- **2026-03-15**: Added Module 7: Entry Trigger & Risk Management — candlestick reversal patterns, ATR trailing stop, BUY/SELL labels.
+- **2026-03-15**: Fixed scale bug: base zones now use price High/Low instead of Stoch values (0-100). Split into 3 files for overlay compatibility.
+- **2026-03-15**: Added RSI+Stoch Pro 7-module indicator (`pine/rsi_stoch_state.pine`) — state tracking, base zones, trend recognition, Fibonacci targets, RSI divergence, MTF Fibo clustering, entry/exit management.
+- **2026-03-14**: Added Pine Script v5 EMA Crossover strategy (`pine/ema-12-26-strategy.pine`) with webhook alerts.
 - **2026-03-14**: Initial project setup — created `claude.md` (project context & rules) and `README.md` (documentation).

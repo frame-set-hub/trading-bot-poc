@@ -41,7 +41,8 @@ trading-bot-poc/
 │   ├── test_main.py           # Integration tests for API endpoints
 │   └── test_signal_parser.py  # Unit tests for signal parsing logic
 ├── pine/
-│   └── strategy.pine          # TradingView Pine Script v5 strategy source
+│   ├── ema-12-26-strategy.pine          # Example: EMA Crossover strategy (reference)
+│   └── <name>.pine            # Each strategy gets its own file
 ├── infra/
 │   └── template.yaml          # AWS SAM / CloudFormation template (optional)
 └── .github/
@@ -76,3 +77,10 @@ trading-bot-poc/
 - **Structured logging.** Use JSON-formatted logs for CloudWatch compatibility. Include `request_id` in all log entries.
 - **No print statements.** Use the `logging` module exclusively.
 - **Keep functions short.** If a function exceeds ~30 lines, consider splitting it.
+
+### 4. Pine Script Rules
+- **One strategy per file.** Each Pine Script strategy must be in its own separate `.pine` file under `pine/`.
+- **`pine/ema-12-26-strategy.pine` is the reference example.** Use it as a template for new strategies (EMA Crossover).
+- **Use descriptive filenames** that reflect the strategy name (e.g., `rsi_divergence.pine`, `bollinger_breakout.pine`).
+- **Pine Script v5 only.** All scripts must use `//@version=5`.
+- **Include webhook alert payloads** in the correct JSON format with `action`, `symbol`, `price`, and `timestamp` fields.
