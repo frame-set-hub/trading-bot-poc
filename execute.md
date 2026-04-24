@@ -40,6 +40,12 @@ Target: baseline backtest passes the success criteria in [docs/planning.md §3](
 - [ ] Short SL = `high[0] + 0.5 × atr14`.
 - [ ] Expose ATR buffer multiplier as input for Phase 2 sweep.
 
+### Step 3b — Adaptive TP by trend type
+- [ ] Add inputs: `tpPerfect1=1.618`, `tpPerfect2=2.618`, `tpVShape1=1.5`, `tpVShape2=2.0`.
+- [ ] At entry, capture `tpLevel1 = trendType=="PERFECT" ? tpPerfect1 : tpVShape1`.
+- [ ] Compute `tp1Val` / `tp2Val` from captured levels (freeze at entry — don't recompute if trendType flips mid-trade).
+- [ ] Verify Strategy Report hit-rate breakdown: PERFECT-TP1 vs V-SHAPE-TP1 (V-SHAPE TP1 should have noticeably higher hit rate since target is closer).
+
 ### Step 4 — Sync indicator with strategy
 - [ ] Remove ATR-trailing-as-entry logic from `rsi_stoch_state.pine` (was used as entry in indicator, strategy ignored it).
 - [ ] Indicator should plot the **same** BUY/SELL labels that the strategy would fire — no divergence.
@@ -65,7 +71,7 @@ Target: baseline backtest passes the success criteria in [docs/planning.md §3](
 - [ ] Add explosive-volume condition on breakout bar + declining-volume on pullback.
 - [ ] Build WFO harness (rolling 12m IS / 3m OOS).
 - [ ] Re-run Config A with WFO; validate OOS Sharpe > 0.5.
-- [ ] Parameter sweep: RSI length (10-20), Stoch %K (7-14), ATR buffer (0.3-1.5), reverse threshold (0.2-0.4).
+- [ ] Parameter sweep: RSI length (10-20), Stoch %K (7-14), ATR buffer (0.3-1.5), reverse threshold (0.2-0.4), **V-SHAPE TP1 (1.272 / 1.382 / 1.5)**, **V-SHAPE TP2 (1.786 / 2.0 / 2.272)**.
 
 ---
 
@@ -105,6 +111,7 @@ Target: baseline backtest passes the success criteria in [docs/planning.md §3](
 | **Scope (Phase 1)** | HTF-only (1H). MTF, WFO, volatility filter all deferred — trigger-conditional. |
 | **Risk sizing** | **1% per trade, max 2%.** Never 100% equity. |
 | **Entry philosophy** | Pullback + Stoch K-cross-D (with prior <20/>80 touch) + `close > high[1]`. Archetype: Raschke Holy Grail + 2-bar reversal hybrid. |
+| **Adaptive TP** | PERFECT → TP1=1.618 / TP2=2.618. V-SHAPE → TP1=1.5 / TP2=2.0. Rationale: V-SHAPE follow-through <40% — exit closer to avoid paper-gain evaporation. |
 | **V-SHAPE handling** | Accepted miss in Phase 1 (evidence: <40% follow-through). Recover only if skip-log justifies Phase 3. |
 | **Commission** | 0.1% per side (Binance-like). Backtest must remain profitable at 0.2% stress test. |
 | **Data window** | 2024-04 → 2026-04 (2 years), 60/40 train/test split. |

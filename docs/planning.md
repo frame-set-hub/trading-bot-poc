@@ -32,12 +32,18 @@ Decisions that are fixed for MVP and only revisited after Phase-1 data is in.
   6. Fire entry when `close > high[1]` (long) or `close < low[1]` (short).
 - **Rationale:** evidence from the research notebook shows close-of-breakout-bar entries suffer slippage and late-entry bias; pullback-break entries improve R:R and win rate at the cost of frequency (which is acceptable).
 
-### 2.2 Exit & Targets
-- **TP1:** Fibo 1.618 — 50% of position.
-- **TP2:** Fibo 2.618 — remaining 50%.
+### 2.2 Exit & Targets — Adaptive by Trend Type
+TP placement **adapts to the breakout classification** set in [STRATEGY-LOGIC.md §Step 3](./STRATEGY-LOGIC.md). Rationale: PERFECT breakouts have ~65–70% follow-through (per NotebookLM research), so distant targets are realistic; V-SHAPE breakouts have <40% follow-through, so targets must be pulled closer to avoid paper gains evaporating before TP1.
+
+| Trend type | TP1 (50%) | TP2 (50%) | Rationale |
+|---|---|---|---|
+| **PERFECT** | Fibo **1.618** | Fibo **2.618** | Structural breakout — can reach distant Golden extension |
+| **V-SHAPE** | Fibo **1.5** | Fibo **2.0** | Lower follow-through — exit earlier, lock gains before reversal |
+
 - **SL (initial):** entry-bar structural low/high **− 0.5× ATR buffer** (to survive institutional wick-outs / stop hunts).
 - **Trailing stop:** **swing-low trailing** based on `lastCompletedOvsLow` (long) / `lastCompletedOvbHigh` (short) — the existing Stoch-swing logic already in `pine/rsi_stoch_strategy.pine`. **Do not** use 1-bar previous-bar trailing as exit (that logic is for entry only).
 - **Force exits:** RSI reset (into 70/30) + trend invalidation rules from [STRATEGY-LOGIC.md §Step 4](./STRATEGY-LOGIC.md).
+- **Note on Fibo 1.5:** non-canonical (canonical Fibo levels near this range are 1.272 and 1.382). 1.5 is chosen for Phase 1 lock-in based on author intuition; Phase 2 WFO will sweep 1.272 / 1.382 / 1.5 to identify the empirical winner for V-SHAPE TP1.
 
 ### 2.3 Risk Sizing
 - **Risk per trade:** **1% of equity** (default) — backtestable up to 2%.
@@ -139,7 +145,7 @@ All three configs share §2 design lock-in except for entry TF and distance filt
 | **Risk** | Max Drawdown %, Calmar Ratio, Max consecutive losses |
 | **Quality** | Sharpe, Sortino, Avg R:R realized |
 | **Frequency** | Trades/month, Avg hold time |
-| **Breakdown** | Win rate for PERFECT vs V-SHAPE separately |
+| **Breakdown** | Win rate for PERFECT vs V-SHAPE separately; TP1 hit-rate by trend type (expect V-SHAPE TP1 hit-rate > PERFECT TP1 hit-rate due to closer target) |
 | **Cost sensitivity** | PnL at 0%, 0.1%, 0.2%, 0.4% commission |
 
 ### 5.4 Win Condition Decision Matrix
