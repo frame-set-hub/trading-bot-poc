@@ -56,11 +56,25 @@ Target: baseline backtest passes the success criteria in [docs/planning.md §3](
 - [ ] Run on XAUUSD 1H, 6-month sample.
 - [ ] Run on EURUSD 1H, 6-month sample.
 - [ ] Fix any Pine runtime errors / NaN issues.
+- [ ] **A/B test: ATR Buffer style vs Mentor-pure style** (per [§7 Open Question 3](./docs/planning.md#8-open-questions)):
+  - [ ] Run each symbol with `atrBufferMult = 0.5` (research-style, default) — record PF, WinRate, MaxDD.
+  - [ ] Re-run with `atrBufferMult = 0` (mentor-pure, structural SL only) — record same.
+  - [ ] Note per-symbol winner (may differ — crypto wicks more, forex less).
+  - [ ] Decision: lock per-symbol default, OR keep 0.5 as universal default and revisit in Phase 2 WFO.
 
-### Step 6 — Full Phase-1 backtest (Config A)
+### Step 6 — Fibo-Shift logic on invalidation (mentor Clip 10)
+Implements [docs/planning.md §2.6](./docs/planning.md#26-fibo-shift-rule-mentor-clip-10--phase-1-lock-in).
+- [ ] On `trendInvalidated`, check `rsiInOvb` / `rsiInOvs` history since trend started.
+- [ ] **Path A** — RSI did reach extreme → existing reset behavior (cut the mountain).
+- [ ] **Path B** — RSI did NOT reach extreme → keep trend active but shift `fiboHead` / `fiboEnd` to encompass the broader prior swing (one degree wider Stoch cycle). Reclassify trend as PERFECT.
+- [ ] Add `trendShiftCount` to flag trades that came from Path B for backtest analysis.
+- [ ] Verify Path B trades have win rate ≥ Path A reset+re-entry trades (else the shift logic is no help).
+
+### Step 7 — Full Phase-1 backtest (Config A)
 - [ ] 2 years × 3 symbols × 1H.
 - [ ] Export Strategy Report for each.
 - [ ] Log V-SHAPE breakouts that were **skipped** (no pullback formed) — for Phase-3 trigger evaluation.
+- [ ] Log Fibo-Shift trades separately — count + PnL contribution.
 - [ ] Record metrics from [docs/planning.md §5.3](./docs/planning.md#53-metrics-to-report-per-config--symbol).
 - [ ] Decision: pass / iterate / redesign per [§5.4 matrix](./docs/planning.md#54-win-condition-decision-matrix).
 
@@ -72,6 +86,8 @@ Target: baseline backtest passes the success criteria in [docs/planning.md §3](
 - [ ] Build WFO harness (rolling 12m IS / 3m OOS).
 - [ ] Re-run Config A with WFO; validate OOS Sharpe > 0.5.
 - [ ] Parameter sweep: RSI length (10-20), Stoch %K (7-14), ATR buffer (0.3-1.5), reverse threshold (0.2-0.4), **V-SHAPE TP1 (1.272 / 1.382 / 1.5)**, **V-SHAPE TP2 (1.786 / 2.0 / 2.272)**.
+- [ ] **Stoch depth predictor (mentor Clip 11):** record previous Stoch cycle peak/trough depth; correlate shallow-previous → deep-current cycle and longer trend hold time. If correlation > 0.3, enable as regime tag.
+- [ ] **HTF oscillator soft-exit (mentor Clip 11):** add optional rule — when in profit and HTF (4H or Weekly) Stoch hits OVB/OVS, take 50% off regardless of Fibo target. Test as (a) replacement for Fibo TP1, (b) added on top of Fibo TPs.
 
 ---
 
@@ -83,6 +99,8 @@ Target: baseline backtest passes the success criteria in [docs/planning.md §3](
 - [ ] Verify no look-ahead bias (`barmerge.lookahead_off`).
 - [ ] Run 2-year backtest × 3 symbols, compare to Phase 1.
 - [ ] Compute ΔPF, ΔMaxDD, ΔSharpe vs Config A.
+- [ ] **Sub-wave reversal alt entry (mentor Clip 11):** allow LTF reversal structure (sub-wave forming reversal) to confirm HTF reversal earlier than HTF candle close. Tag these as separate entry type for stat breakdown.
+- [ ] **Fibo cluster priority target:** when current-TF Fibo level overlaps HTF Fibo within `clusterThresh` (existing code in `rsi_stoch_state.pine`), if cluster price sits between TP1 and TP2, override TP1 to the cluster level. Compare PnL with/without this rule.
 
 ---
 
@@ -111,7 +129,9 @@ Target: baseline backtest passes the success criteria in [docs/planning.md §3](
 | **Scope (Phase 1)** | HTF-only (1H). MTF, WFO, volatility filter all deferred — trigger-conditional. |
 | **Risk sizing** | **1% per trade, max 2%.** Never 100% equity. |
 | **Entry philosophy** | Pullback + Stoch K-cross-D (with prior <20/>80 touch) + `close > high[1]`. Archetype: Raschke Holy Grail + 2-bar reversal hybrid. |
-| **Adaptive TP** | PERFECT → TP1=1.618 / TP2=2.618. V-SHAPE → TP1=1.5 / TP2=2.0. Rationale: V-SHAPE follow-through <40% — exit closer to avoid paper-gain evaporation. |
+| **Adaptive TP** | PERFECT → TP1=1.618 / TP2=2.618. V-SHAPE → TP1=1.5 / TP2=2.0. Rationale: V-SHAPE follow-through <40%, so 1.618 acts as rejection wall — TP at 1.5 books gains *before* the rejection zone. Expectancy math: 0.55×1.5R − 0.45×1R = +0.375R vs 0.40×1.618R − 0.60×1R = +0.047R. |
+| **Fibo Shift on invalidation** | mentor Clip 10 — if Fibo destroyed but RSI didn't reach OVB/OVS, shift Fibo wider instead of resetting (V-SHAPE → broader PERFECT). Phase 1 lock-in. |
+| **2-Fibo averaging-down** | **SKIPPED** — conflicts with risk-per-trade rule. Knowledge captured in [docs/planning.md §9.1](./docs/planning.md#91-2-fibo-averaging-down-mentor-clip-11--skipped). Pyramiding-on-confirmation considered as Phase 4+ alternative if needed. |
 | **V-SHAPE handling** | Accepted miss in Phase 1 (evidence: <40% follow-through). Recover only if skip-log justifies Phase 3. |
 | **Commission** | 0.1% per side (Binance-like). Backtest must remain profitable at 0.2% stress test. |
 | **Data window** | 2024-04 → 2026-04 (2 years), 60/40 train/test split. |

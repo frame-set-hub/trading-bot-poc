@@ -33,17 +33,26 @@ Decisions that are fixed for MVP and only revisited after Phase-1 data is in.
 - **Rationale:** evidence from the research notebook shows close-of-breakout-bar entries suffer slippage and late-entry bias; pullback-break entries improve R:R and win rate at the cost of frequency (which is acceptable).
 
 ### 2.2 Exit & Targets — Adaptive by Trend Type
-TP placement **adapts to the breakout classification** set in [STRATEGY-LOGIC.md §Step 3](./STRATEGY-LOGIC.md). Rationale: PERFECT breakouts have ~65–70% follow-through (per NotebookLM research), so distant targets are realistic; V-SHAPE breakouts have <40% follow-through, so targets must be pulled closer to avoid paper gains evaporating before TP1.
+TP placement **adapts to the breakout classification** set in [STRATEGY-LOGIC.md §Step 3](./STRATEGY-LOGIC.md).
 
 | Trend type | TP1 (50%) | TP2 (50%) | Rationale |
 |---|---|---|---|
-| **PERFECT** | Fibo **1.618** | Fibo **2.618** | Structural breakout — can reach distant Golden extension |
-| **V-SHAPE** | Fibo **1.5** | Fibo **2.0** | Lower follow-through — exit earlier, lock gains before reversal |
+| **PERFECT** | Fibo **1.618** | Fibo **2.618** | Follow-through ~65-70%. 1.618 acts as a target zone the trend usually breaks through. |
+| **V-SHAPE** | Fibo **1.5** | Fibo **2.0** | Follow-through <40%. 1.618 acts as a *rejection wall* (mentor rule: V-shape that fails to break 1.618 = Fibo destroyed). TP at 1.5 books gains *before* the rejection zone. |
+
+**Why 1.5 for V-SHAPE — expectancy argument:**
+The mentor's "Fibo destroyed if not reaching 1.618" rule (Clip 10) implies 1.618 functions as resistance for V-shape moves. If V-shape follow-through is ~40%, then ~60% of V-shapes get rejected at or before 1.618. Closing at 1.5 captures the bird-in-hand:
+
+```
+TP=1.5   → 0.55 × 1.5R − 0.45 × 1R = +0.375R per trade
+TP=1.618 → 0.40 × 1.618R − 0.60 × 1R = +0.047R per trade
+```
+
+Phase 2 WFO will sweep 1.272 / 1.382 / 1.5 to find the empirical optimum (1.5 is non-canonical Fibo, locked for Phase 1 on the user-trader's intuition + this expectancy framing).
 
 - **SL (initial):** entry-bar structural low/high **− 0.5× ATR buffer** (to survive institutional wick-outs / stop hunts).
 - **Trailing stop:** **swing-low trailing** based on `lastCompletedOvsLow` (long) / `lastCompletedOvbHigh` (short) — the existing Stoch-swing logic already in `pine/rsi_stoch_strategy.pine`. **Do not** use 1-bar previous-bar trailing as exit (that logic is for entry only).
-- **Force exits:** RSI reset (into 70/30) + trend invalidation rules from [STRATEGY-LOGIC.md §Step 4](./STRATEGY-LOGIC.md).
-- **Note on Fibo 1.5:** non-canonical (canonical Fibo levels near this range are 1.272 and 1.382). 1.5 is chosen for Phase 1 lock-in based on author intuition; Phase 2 WFO will sweep 1.272 / 1.382 / 1.5 to identify the empirical winner for V-SHAPE TP1.
+- **Force exits:** RSI reset (into 70/30) + trend invalidation rules from [STRATEGY-LOGIC.md §Step 4](./STRATEGY-LOGIC.md), refined by §2.6 Fibo-Shift rule below.
 
 ### 2.3 Risk Sizing
 - **Risk per trade:** **1% of equity** (default) — backtestable up to 2%.
@@ -62,6 +71,26 @@ TP placement **adapts to the breakout classification** set in [STRATEGY-LOGIC.md
 - Walk-Forward Optimization harness — Phase 2.
 - Candlestick reversal entries as triggers (currently in indicator) — evaluated but ranked below pullback+Stoch trigger.
 - RSI divergence as entry gate — deferred pending data.
+- Stoch shallow/deep predictor (mentor "จิ้มลึก vs จิ้มไม่ลึก", Clip 11) — Phase 2 filter.
+- HTF oscillator soft-exit (mentor "ชน week overbought = take profit", Clip 11) — Phase 2 exit alternative.
+- Sub-wave reversal as early HTF entry (mentor Clip 11) — Phase 3 (paired with MTF execution).
+- MTF Fibo cluster as **priority target** (vs current "visual highlight") — Phase 3 enhancement.
+
+### 2.6 Fibo-Shift Rule (mentor Clip 10) — Phase 1 lock-in
+Refines the existing RSI-reset / "cut the mountain" logic.
+
+When a trend is invalidated (price returns through `fiboHead`):
+- **Path A — Fibo destroyed AND RSI reached OVB/OVS:** keep current behavior — reset all state ("cut the mountain"). Wait for new structure to form.
+- **Path B — Fibo destroyed AND RSI did NOT reach OVB/OVS:** **DO NOT reset.** Instead, **shift the Fibo to encompass the broader swing** (one degree wider). The previous V-SHAPE attempt becomes the inner leg of a larger PERFECT structure. Trade resumes against the wider Fibo.
+
+**Why this matters:** the current pine code resets on every invalidation, which throws away setups that mentor classifies as "still developing" (broader perfect forming around a failed inner V-shape). Adding Path B should reduce the false-reset rate and recover trades currently being missed.
+
+### 2.7 Sub-wave Reversal — Alt HTF Confirmation (mentor Clip 11) — Phase 3
+HTF (e.g., 1H) trend reversal can be confirmed two ways:
+- (a) HTF candlestick reversal pattern on close, OR
+- (b) **LTF (e.g., 15m) sub-wave fully forms a reversal structure** ("สับเวฟฟอร์มตัว").
+
+Path (b) gives an earlier entry without waiting for HTF candle close. Defer to Phase 3 since it requires MTF state plumbing already planned for V-SHAPE recovery.
 
 ---
 
@@ -99,12 +128,16 @@ Only if Phase 1 passes success criteria.
 - [ ] Set up Walk-Forward Optimization harness (rolling 12-month in-sample, 3-month out-of-sample).
 - [ ] Re-run backtest with volume filter on breakout (explosive vol) and pullback (declining vol).
 - [ ] Validate OOS Sharpe > 0.5 on WFO windows.
+- [ ] **Stoch depth predictor (mentor):** track previous Stoch cycle peak/trough depth; if last cycle was shallow (e.g., barely touched 80 or 20), tag the current setup as "drag-out expected" and adjust position management (e.g., looser trailing, hold runner longer).
+- [ ] **HTF oscillator soft-exit (mentor):** add optional rule — when in profit and HTF (Weekly or 4H) Stoch hits OVB/OVS, take 50% off regardless of Fibo target. Test as both replacement for and supplement to Fibo TPs.
 
 ### 🚀 Phase 3 — MTF V-SHAPE Recovery *(Trigger-conditional)*
 Only if Phase 2 log shows meaningful V-SHAPE profits being missed (logged as "skipped trades" in Phase 1).
 - [ ] Add HTF state export (1H) → LTF execution (5m or 15m).
 - [ ] Implement pullback+Stoch trigger on LTF while HTF trend is active.
 - [ ] Test **without** distance filter first (Config B — see §5).
+- [ ] **Sub-wave reversal alt entry (§2.7):** allow LTF reversal structure to confirm HTF reversal earlier than HTF candle close.
+- [ ] **Fibo cluster as priority target:** when current-TF Fibo level overlaps HTF Fibo within threshold (existing MTF cluster logic from `rsi_stoch_state.pine`), bias the strategy toward that level — e.g., move TP1 to the cluster level if it sits between current TP1 and TP2.
 
 ### 🚀 Phase 4 — MTF + Distance Filter *(Conditional on Phase 3)*
 Only if Phase 3 shows V-SHAPE recovery works but late-extended entries hurt PF.
@@ -181,6 +214,10 @@ Mirror of the RAG POC's lean/agile rule: **don't build a feature until data says
 | **MTF V-SHAPE recovery** (Config B) | Phase 1 skip-log shows V-SHAPE trades worth catching | Missed V-SHAPE PnL projected > 20% of realized PnL over test window | Missed PnL < 10% or adds DD risk > 5% |
 | **MTF + distance filter** (Config C) | Config B over-entries on extended HTF moves | Config B max-DD rises > 5% vs A AND V-SHAPE late-entry failures > 30% | Config B already meets all thresholds |
 | **RSI divergence entry** | Add secondary setup for range markets | Phase 1 equity curve has long flat patches corresponding to range periods | no sustained range periods in test data |
+| **Stoch depth predictor** | Mentor rule: shallow previous cycle predicts deep next cycle + drag-out trend | Phase 2 data shows correlation between previous-cycle depth and next-cycle trade duration/PnL | no measurable correlation |
+| **HTF oscillator soft-exit** | Mentor rule: HTF OVB/OVS = take profit | Phase 2 backtest shows fixed Fibo TPs leave > 30% of profits on the table when HTF reversal could have been used | Fibo TPs already capture > 80% of theoretical maximum exit |
+| **Sub-wave reversal alt entry** | Earlier HTF confirmation via LTF structure | Phase 3 MTF infrastructure is in place AND Phase 1 shows late-entry bias | MTF not adopted |
+| **Fibo cluster priority target** | MTF cluster zones are higher-conviction TPs | Phase 3 confirms MTF entry; cluster zones overlap with trade-paths > 30% of trades | clusters rarely align with target zones |
 | **Live forward (Phase 5)** | Only do this after robust backtest | Phase 2 WFO stable | backtest unstable |
 
 ---
@@ -206,12 +243,30 @@ Derived from `pine/rsi_stoch_strategy.pine` + `pine/rsi_stoch_state.pine` audit 
 To revisit before Phase 1 backtest launch:
 1. Which Stoch K/D cross is canonical — K crosses D from below while K was <20, or K exits the <20 zone? (Ref: NotebookLM recommends K-cross-D with K previously <20.)
 2. Should `close > high[1]` require `high[1]` to be the pullback low-point, or any recent bar? (Tighter interpretation reduces false entries.)
-3. ATR buffer multiplier — 0.5× ATR vs 1.0× ATR vs volatility-adaptive? (Test as parameter sweep in Phase 2 WFO.)
+3. **ATR buffer style — research vs mentor.** Mentor (Clip 10) doesn't use ATR — uses pure structural SL at the bar low/high. Research source ("Beyond Basic Support and Resistance") recommends 0.5–1.5× ATR buffer to survive institutional wick-outs. Phase 1 lock-in: keep `atrBufferMult=0.5` as default, A/B test against `0` in Phase 1 Step 5 smoke tests; full sweep (0/0.3/0.5/1.0/1.5) in Phase 2 WFO.
 4. Force-close on RSI reset — keep as hard rule, or soft (close 50%)? Hard is safer, soft captures more runner upside.
 
 ---
 
-## 9. Research Reference
+## 9. Deferred Knowledge / Out of Scope
+
+Knowledge captured from research but **explicitly excluded** from the current plan. Documented here so it isn't re-discovered later as if new.
+
+### 9.1 2-Fibo Averaging-Down (mentor Clip 11) — SKIPPED
+**What it is:** if a position is in drawdown but the macro trend thesis is intact, hold and add a second position only after price moves "2 Fibo channels" against the original entry.
+
+**Why skipped:**
+1. Conflicts with the 1% risk-per-trade rule. Adding a second position effectively doubles risk on the worst trades.
+2. Risk-of-Ruin grows non-linearly. With ~40% win rate, averaging on a losing leg compounds losses across consecutive failures.
+3. Discretionary technique — mentor uses fundamental/macro context that the algorithmic system lacks.
+4. Backtest-deceptive: averaging down looks profitable in mean-reverting samples but blows up in trending-against-you regimes.
+5. Adds **leverage**, not **edge** — the system doesn't predict the market better, it just bets bigger on losers.
+
+**Safer alternative if scaling is desired:** **Pyramiding on confirmation** (add to winners, not losers — Turtle-style). Defer to Phase 4+ if Phase 1-3 baseline proves stable.
+
+---
+
+## 10. Research Reference
 
 - **NotebookLM notebook:** `9db4787d-26a7-4cfd-ad2a-a308efb222ab` (66 sources — GitHub repo, pine scripts, 63 deep-research sources on dual oscillators, Fibo extensions, breakout systems, walk-forward validation, trailing stops, pullback entries).
 - **Archetype anchor source:** *"Algorithmic Trading Architectures: A Comprehensive Analysis of Dual-Oscillator Filters, Fibonacci Projections, and Breakout Structural Integrity"* — the deep-research synthesis doc generated for this notebook.

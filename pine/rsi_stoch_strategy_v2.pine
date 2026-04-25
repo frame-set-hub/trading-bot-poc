@@ -1,0 +1,440 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © trading-bot-poc
+//
+// === Phase 1 Strategy v2 — Steps 1-3 only ===
+// Implements: §2.1 Entry (pullback + Stoch K-cross-D + close>high[1])
+//             §2.3 Risk-based sizing (1% per trade, NOT 100% equity)
+//             §2.2 SL with ATR buffer (low - 0.5×ATR)
+//
+// NOT YET implemented (next iteration):
+//   Step 3b: Adaptive TP (PERFECT 1.618/2.618 vs V-SHAPE 1.5/2.0)
+//   Step 4 : Sync indicator with strategy
+//   Step 6 : Fibo Shift logic on invalidation
+//
+// Original v1 file `rsi_stoch_strategy.pine` is kept for A/B comparison.
+
+//@version=5
+strategy("RSI+Stoch Fibo Strategy v2", shorttitle="RS Fibo v2", overlay=true,
+     default_qty_type=strategy.fixed, default_qty_value=1,
+     initial_capital=100000, commission_value=0.1, pyramiding=0,
+     max_lines_count=500, max_labels_count=500, calc_on_every_tick=false,
+     process_orders_on_close=true)
+
+// ═══════════════════════════════════════════════════════════
+// INPUTS
+// ═══════════════════════════════════════════════════════════
+
+// --- RSI Settings ---
+rsiLength   = input.int(14, minval=1, title="RSI Length", group="RSI Settings")
+rsiSource   = input.source(close, "RSI Source", group="RSI Settings")
+
+// --- Stochastic Settings ---
+periodK = input.int(9, title="%K Length", minval=1, group="Stoch Settings")
+periodD = input.int(3, title="%D Smoothing", minval=1, group="Stoch Settings")
+smoothK = input.int(3, title="%K Smoothing", minval=1, group="Stoch Settings")
+
+// --- Zone Thresholds ---
+stochOvbLevel = input.int(80, "Stoch OVB Level", group="Zone Settings")
+stochOvsLevel = input.int(20, "Stoch OVS Level", group="Zone Settings")
+rsiOvbLevel   = input.int(70, "RSI OVB Level", group="Zone Settings")
+rsiOvsLevel   = input.int(30, "RSI OVS Level", group="Zone Settings")
+
+// --- Risk & Entry (v2 NEW) ---
+riskPercent      = input.float(1.0, "Risk per trade (%)", minval=0.1, maxval=5.0, step=0.1, group="Risk Management",
+     tooltip="% of equity to risk per trade. Replaces v1's 100%-equity sizing (which guaranteed Risk-of-Ruin).")
+atrLength        = input.int(14, "ATR Length (for SL buffer)", minval=1, group="Risk Management")
+atrBufferMult    = input.float(0.5, "ATR Buffer Multiplier", minval=0.0, maxval=2.0, step=0.1, group="Risk Management",
+     tooltip="SL = entry-bar low/high ± ATR × this. Survives stop-hunt wicks. 0.5 default; sweep 0.3-1.5 in WFO.")
+
+// --- TP Levels (Phase 1: same for PERFECT and V-SHAPE — Step 3b will add adaptive) ---
+tp1FiboLevel     = input.float(1.618, "TP1 Fibo Level", minval=0.5, step=0.1, group="Targets")
+tp2FiboLevel     = input.float(2.618, "TP2 Fibo Level", minval=1.0, step=0.1, group="Targets")
+useTP2           = input.bool(true, "Use TP2 (50/50 split)", group="Targets",
+     tooltip="ON: 50% close at TP1, 50% at TP2. OFF: 100% close at TP1.")
+
+tradeDirection   = input.string("Both", "Trade Direction", options=["Long", "Short", "Both"], group="Targets")
+
+// ═══════════════════════════════════════════════════════════
+// CALCULATIONS
+// ═══════════════════════════════════════════════════════════
+
+rsiVal = ta.rsi(rsiSource, rsiLength)
+k = ta.sma(ta.stoch(close, high, low, periodK), smoothK)
+d = ta.sma(k, periodD)
+atrVal = ta.atr(atrLength)
+
+// ═══════════════════════════════════════════════════════════
+// STEP 1: STATE TRACKING (unchanged from v1)
+// ═══════════════════════════════════════════════════════════
+
+stochInOvb = k > stochOvbLevel
+stochInOvs = k < stochOvsLevel
+
+stochEnteredOvb = stochInOvb and not stochInOvb[1]
+stochExitedOvb  = not stochInOvb and stochInOvb[1]
+stochEnteredOvs = stochInOvs and not stochInOvs[1]
+stochExitedOvs  = not stochInOvs and stochInOvs[1]
+
+var float priceCycleHigh = na
+if stochEnteredOvb
+    priceCycleHigh := high
+else if stochInOvb
+    priceCycleHigh := math.max(priceCycleHigh, high)
+
+var float priceCycleLow = na
+if stochEnteredOvs
+    priceCycleLow := low
+else if stochInOvs
+    priceCycleLow := math.min(priceCycleLow, low)
+
+var float stochCycleHigh = na
+if stochEnteredOvb
+    stochCycleHigh := k
+else if stochInOvb
+    stochCycleHigh := math.max(stochCycleHigh, k)
+
+var float stochCycleLow = na
+if stochEnteredOvs
+    stochCycleLow := k
+else if stochInOvs
+    stochCycleLow := math.min(stochCycleLow, k)
+
+rsiInOvb = rsiVal > rsiOvbLevel
+rsiInOvs = rsiVal < rsiOvsLevel
+rsiEnteredOvb = rsiInOvb and not rsiInOvb[1]
+rsiEnteredOvs = rsiInOvs and not rsiInOvs[1]
+
+// ═══════════════════════════════════════════════════════════
+// STEP 2: BASE ZONE (unchanged from v1)
+// ═══════════════════════════════════════════════════════════
+
+var float lastCompletedOvbHigh = na
+if stochExitedOvb
+    lastCompletedOvbHigh := priceCycleHigh[1]
+
+var float lastCompletedOvsLow = na
+if stochExitedOvs
+    lastCompletedOvsLow := priceCycleLow[1]
+
+var float resistanceLine = na
+var float supportLine    = na
+
+if stochExitedOvs
+    resistanceLine := lastCompletedOvbHigh
+if stochExitedOvb
+    supportLine := lastCompletedOvsLow
+
+if rsiEnteredOvb or rsiEnteredOvs
+    resistanceLine := na
+    supportLine    := na
+    lastCompletedOvbHigh := na
+    lastCompletedOvsLow  := na
+
+// ═══════════════════════════════════════════════════════════
+// STEP 3: TREND RECOGNITION (unchanged from v1)
+// ═══════════════════════════════════════════════════════════
+
+var float prevPeakInZone      = na
+var float currentPeakInZone   = na
+var bool  hasLowerHigh        = false
+var float prevTroughInZone    = na
+var float currentTroughInZone = na
+var bool  hasHigherLow        = false
+
+if stochExitedOvb
+    prevPeakInZone    := currentPeakInZone
+    currentPeakInZone := stochCycleHigh[1]
+    if not na(prevPeakInZone) and not na(currentPeakInZone)
+        hasLowerHigh := currentPeakInZone < prevPeakInZone
+
+if stochExitedOvs
+    prevTroughInZone    := currentTroughInZone
+    currentTroughInZone := stochCycleLow[1]
+    if not na(prevTroughInZone) and not na(currentTroughInZone)
+        hasHigherLow := currentTroughInZone > prevTroughInZone
+
+if rsiEnteredOvb or rsiEnteredOvs
+    prevPeakInZone := na
+    currentPeakInZone := na
+    hasLowerHigh := false
+    prevTroughInZone := na
+    currentTroughInZone := na
+    hasHigherLow := false
+
+breakoutUp   = not na(resistanceLine) and close > resistanceLine and close[1] <= resistanceLine
+breakoutDown = not na(supportLine)    and close < supportLine    and close[1] >= supportLine
+
+string breakoutUpType   = breakoutUp   ? (hasHigherLow ? "PERFECT" : "V-SHAPE") : na
+string breakoutDownType = breakoutDown ? (hasLowerHigh ? "PERFECT" : "V-SHAPE") : na
+
+if breakoutUp
+    resistanceLine := na
+
+if breakoutDown
+    supportLine := na
+
+// ═══════════════════════════════════════════════════════════
+// STEP 4: FIBO TARGETS (unchanged from v1)
+// ═══════════════════════════════════════════════════════════
+
+fiboLevel(float fiboHead_, float fiboEnd_, float level) =>
+    fiboHead_ + (fiboEnd_ - fiboHead_) * level
+
+var bool   trendActive      = false
+var int    trendDirection   = 0
+var string trendType        = na
+var float  fiboHead         = na
+var float  fiboEnd          = na
+var float  fibo0618         = na
+var float  fibo1618         = na
+var float  fibo2618         = na
+var float  fibo4236         = na
+var float  trendExtremePrice = na
+
+if breakoutUp
+    trendActive      := true
+    trendDirection   := 1
+    trendType        := breakoutUpType
+    fiboHead         := supportLine[1]
+    fiboEnd          := resistanceLine[1]
+    trendExtremePrice := close
+
+if breakoutDown
+    trendActive      := true
+    trendDirection   := -1
+    trendType        := breakoutDownType
+    fiboHead         := resistanceLine[1]
+    fiboEnd          := supportLine[1]
+    trendExtremePrice := close
+
+if trendActive and not na(fiboHead) and not na(fiboEnd)
+    fibo0618 := fiboLevel(fiboHead, fiboEnd, 0.618)
+    fibo1618 := fiboLevel(fiboHead, fiboEnd, 1.618)
+    fibo2618 := fiboLevel(fiboHead, fiboEnd, 2.618)
+    fibo4236 := fiboLevel(fiboHead, fiboEnd, 4.236)
+
+if trendActive
+    if trendDirection == 1
+        trendExtremePrice := math.max(nz(trendExtremePrice), high)
+    else
+        trendExtremePrice := math.min(nz(trendExtremePrice, 1e18), low)
+
+trendInvalidated = false
+if trendActive
+    if trendDirection == 1 and close < fiboHead
+        trendInvalidated := true
+    if trendDirection == -1 and close > fiboHead
+        trendInvalidated := true
+    if trendType == "V-SHAPE" and not na(fibo1618)
+        fiboRange = math.abs(fiboEnd - fiboHead)
+        reverseThreshold = fiboRange * 0.3
+        if trendDirection == 1
+            if (trendExtremePrice - close) > reverseThreshold and trendExtremePrice < fibo1618
+                trendInvalidated := true
+        if trendDirection == -1
+            if (close - trendExtremePrice) > reverseThreshold and trendExtremePrice > fibo1618
+                trendInvalidated := true
+
+if trendInvalidated
+    trendActive := false
+    trendDirection := 0
+    trendType := na
+    fiboHead := na
+    fiboEnd := na
+    fibo0618 := na
+    fibo1618 := na
+    fibo2618 := na
+    fibo4236 := na
+    trendExtremePrice := na
+
+if rsiEnteredOvb or rsiEnteredOvs
+    trendActive := false
+    trendDirection := 0
+    trendType := na
+    fiboHead := na
+    fiboEnd := na
+    fibo0618 := na
+    fibo1618 := na
+    fibo2618 := na
+    fibo4236 := na
+    trendExtremePrice := na
+
+// ═══════════════════════════════════════════════════════════
+// STEP 5 [v2 NEW]: PULLBACK + STOCH ENTRY STATE
+// "เข้าหลัง pullback" — track ว่า Stoch K ลงไปแตะ OVS (long) หรือ OVB (short)
+// อย่างน้อย 1 ครั้งหลัง breakout — แปลว่า pullback เกิดขึ้นแล้ว
+// ═══════════════════════════════════════════════════════════
+
+var bool stochReachedOvsAfterTrend = false  // long path
+var bool stochReachedOvbAfterTrend = false  // short path
+
+// Reset flags on new trend (don't fire on breakout bar)
+if breakoutUp or breakoutDown
+    stochReachedOvsAfterTrend := false
+    stochReachedOvbAfterTrend := false
+
+// Set flag when Stoch reaches extreme during active trend (pullback complete)
+if trendActive and trendDirection == 1 and stochInOvs
+    stochReachedOvsAfterTrend := true
+if trendActive and trendDirection == -1 and stochInOvb
+    stochReachedOvbAfterTrend := true
+
+// Reset on RSI extreme or invalidation
+if rsiEnteredOvb or rsiEnteredOvs or trendInvalidated
+    stochReachedOvsAfterTrend := false
+    stochReachedOvbAfterTrend := false
+
+// Stoch K cross D events
+stochCrossedUp   = ta.crossover(k, d)
+stochCrossedDown = ta.crossunder(k, d)
+
+// ═══════════════════════════════════════════════════════════
+// STEP 6 [v2 NEW]: ENTRY CONDITIONS
+// Long  : trend up   + Stoch reached OVS + Stoch K-cross-D up   + close > high[1]
+// Short : trend down + Stoch reached OVB + Stoch K-cross-D down + close < low[1]
+// ═══════════════════════════════════════════════════════════
+
+allowLong  = tradeDirection == "Long"  or tradeDirection == "Both"
+allowShort = tradeDirection == "Short" or tradeDirection == "Both"
+
+longEntryCondition = trendActive and trendDirection == 1
+     and stochReachedOvsAfterTrend
+     and stochCrossedUp
+     and close > high[1]
+     and not stochInOvb
+
+shortEntryCondition = trendActive and trendDirection == -1
+     and stochReachedOvbAfterTrend
+     and stochCrossedDown
+     and close < low[1]
+     and not stochInOvs
+
+longEntry  = allowLong  and longEntryCondition  and strategy.position_size == 0
+shortEntry = allowShort and shortEntryCondition and strategy.position_size == 0
+
+// ═══════════════════════════════════════════════════════════
+// STEP 7 [v2 NEW]: RISK-BASED POSITION SIZING + ATR-BUFFERED SL
+// SL ห่าง bar low/high ออก ATR × buffer → กัน wick-out
+// qty = (equity × risk%) / |entry − SL|
+// ═══════════════════════════════════════════════════════════
+
+calcLongSL()  => low  - atrVal * atrBufferMult
+calcShortSL() => high + atrVal * atrBufferMult
+
+calcRiskQty(float entryPrice, float slPrice) =>
+    stopDist = math.abs(entryPrice - slPrice)
+    riskCash = strategy.equity * riskPercent / 100.0
+    stopDist > 0 ? riskCash / stopDist : 0.0
+
+// TP levels (computed once per bar)
+tp1Val = trendActive and not na(fiboHead) and not na(fiboEnd) ? fiboLevel(fiboHead, fiboEnd, tp1FiboLevel) : na
+tp2Val = trendActive and not na(fiboHead) and not na(fiboEnd) ? fiboLevel(fiboHead, fiboEnd, tp2FiboLevel) : na
+
+// ═══════════════════════════════════════════════════════════
+// STEP 8: STRATEGY ORDERS
+// ═══════════════════════════════════════════════════════════
+
+var float entrySL = na
+
+if longEntry and not na(tp1Val)
+    sl  = calcLongSL()
+    qty = calcRiskQty(close, sl)
+    if qty > 0
+        entrySL := sl
+        strategy.entry("Long", strategy.long, qty=qty)
+        if useTP2 and not na(tp2Val)
+            strategy.exit("Long TP1", "Long", qty_percent=50, limit=tp1Val, stop=entrySL)
+            strategy.exit("Long TP2", "Long", limit=tp2Val, stop=entrySL)
+        else
+            strategy.exit("Long TP1", "Long", limit=tp1Val, stop=entrySL)
+
+if shortEntry and not na(tp1Val)
+    sl  = calcShortSL()
+    qty = calcRiskQty(close, sl)
+    if qty > 0
+        entrySL := sl
+        strategy.entry("Short", strategy.short, qty=qty)
+        if useTP2 and not na(tp2Val)
+            strategy.exit("Short TP1", "Short", qty_percent=50, limit=tp1Val, stop=entrySL)
+            strategy.exit("Short TP2", "Short", limit=tp2Val, stop=entrySL)
+        else
+            strategy.exit("Short TP1", "Short", limit=tp1Val, stop=entrySL)
+
+// --- Trailing Stop (Stoch Swing Structure — unchanged from v1) ---
+var float trailingStopLong  = na
+var float trailingStopShort = na
+
+if trendActive and trendDirection == 1
+    if not na(lastCompletedOvsLow)
+        trailingStopLong := na(trailingStopLong) ? lastCompletedOvsLow : math.max(trailingStopLong, lastCompletedOvsLow)
+else
+    trailingStopLong := na
+
+if trendActive and trendDirection == -1
+    if not na(lastCompletedOvbHigh)
+        trailingStopShort := na(trailingStopShort) ? lastCompletedOvbHigh : math.min(trailingStopShort, lastCompletedOvbHigh)
+else
+    trailingStopShort := na
+
+if strategy.position_size > 0 and not na(trailingStopLong) and close < trailingStopLong
+    strategy.close_all(comment="Trailing SL")
+if strategy.position_size < 0 and not na(trailingStopShort) and close > trailingStopShort
+    strategy.close_all(comment="Trailing SL")
+
+// --- Force close on invalidation / RSI reset ---
+if trendInvalidated and strategy.position_size != 0
+    strategy.close_all(comment="INVALIDATED")
+
+if (rsiEnteredOvb or rsiEnteredOvs) and strategy.position_size != 0
+    strategy.close_all(comment="RSI Reset")
+
+// ═══════════════════════════════════════════════════════════
+// PLOTTING
+// ═══════════════════════════════════════════════════════════
+
+// Entry intent markers (helps debugging — see why entries fire/don't fire)
+plotshape(longEntry,  title="Long Entry",  location=location.belowbar, color=color.new(color.lime,0),    style=shape.triangleup,   size=size.small)
+plotshape(shortEntry, title="Short Entry", location=location.abovebar, color=color.new(color.red,0),     style=shape.triangledown, size=size.small)
+
+// Pullback-readiness state (small dot when Stoch reached extreme)
+plotshape(stochReachedOvsAfterTrend and trendActive and trendDirection ==  1, title="Long pullback ready",  location=location.belowbar, color=color.new(color.aqua, 60), style=shape.circle, size=size.tiny)
+plotshape(stochReachedOvbAfterTrend and trendActive and trendDirection == -1, title="Short pullback ready", location=location.abovebar, color=color.new(color.fuchsia, 60), style=shape.circle, size=size.tiny)
+
+// Fibo target / SL lines while in position
+var line fiboLine1618 = na
+var line fiboLine2618 = na
+var label fiboLbl1618 = na
+var label fiboLbl2618 = na
+var line  slLineObj   = na
+var label slLblObj    = na
+
+if not na(fiboLine1618)
+    line.delete(fiboLine1618)
+    fiboLine1618 := na
+if not na(fiboLine2618)
+    line.delete(fiboLine2618)
+    fiboLine2618 := na
+if not na(fiboLbl1618)
+    label.delete(fiboLbl1618)
+    fiboLbl1618 := na
+if not na(fiboLbl2618)
+    label.delete(fiboLbl2618)
+    fiboLbl2618 := na
+if not na(slLineObj)
+    line.delete(slLineObj)
+    slLineObj := na
+if not na(slLblObj)
+    label.delete(slLblObj)
+    slLblObj := na
+
+if trendActive and not na(tp1Val) and strategy.position_size != 0
+    tpColor1 = color.new(#FF9800, 20)
+    tpColor2 = color.new(#F44336, 20)
+    fiboLine1618 := line.new(bar_index, tp1Val, bar_index + 1, tp1Val, color=tpColor1, width=2, style=line.style_dashed, extend=extend.right)
+    fiboLbl1618  := label.new(bar_index + 10, tp1Val, "TP1 " + str.tostring(tp1Val, format.mintick), style=label.style_none, textcolor=tpColor1, size=size.small)
+    if useTP2 and not na(tp2Val)
+        fiboLine2618 := line.new(bar_index, tp2Val, bar_index + 1, tp2Val, color=tpColor2, width=2, style=line.style_dashed, extend=extend.right)
+        fiboLbl2618  := label.new(bar_index + 10, tp2Val, "TP2 " + str.tostring(tp2Val, format.mintick), style=label.style_none, textcolor=tpColor2, size=size.small)
+    if not na(entrySL)
+        slLineObj := line.new(bar_index, entrySL, bar_index + 1, entrySL, color=color.new(color.red, 0), width=2, style=line.style_solid, extend=extend.right)
+        slLblObj  := label.new(bar_index + 10, entrySL, "SL " + str.tostring(entrySL, format.mintick), style=label.style_none, textcolor=color.red, size=size.small)
