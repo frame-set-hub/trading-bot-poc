@@ -34,9 +34,15 @@ clusterThresh = input.float(0.5, "Cluster Threshold (%)", minval=0.05, step=0.05
      tooltip="เปรียบเทียบ Fibo levels เป็น % ของราคา เช่น 0.5% = ห่างกันไม่เกิน 0.5% ถือว่า cluster")
 
 // --- Entry & Risk Settings ---
-trailingAtrLen   = input.int(14, "Trailing ATR Length", minval=1, group="Entry & Risk")
-trailingAtrMult  = input.float(2.0, "Trailing ATR Multiplier", minval=0.5, step=0.5, group="Entry & Risk")
-slLineLength     = input.int(20, "SL Line Length (bars)", minval=5, group="Entry & Risk")
+atrLength        = input.int(14, "ATR Length (for SL buffer)", minval=1, group="Entry & Risk")
+atrBufferMult    = input.float(0.5, "ATR Buffer Multiplier", minval=0.0, maxval=2.0, step=0.1, group="Entry & Risk")
+rrMinimum        = input.float(3.0, "Minimum Risk:Reward Ratio (RR)", minval=1.0, maxval=10.0, step=0.5, group="Entry & Risk")
+useSmartPartialExit = input.bool(true, "Smart Partial Exit (Stoch extreme + reversal)", group="Entry & Risk")
+tpPerfect1       = input.float(1.618, "TP1 PERFECT (Fibo)", minval=0.5, step=0.1, group="Targets")
+tpPerfect2       = input.float(2.618, "TP2 PERFECT (Fibo)", minval=1.0, step=0.1, group="Targets")
+tpVShape1        = input.float(1.5,   "TP1 V-SHAPE (Fibo)", minval=0.5, step=0.05, group="Targets")
+tpVShape2        = input.float(2.0,   "TP2 V-SHAPE (Fibo)", minval=1.0, step=0.1, group="Targets")
+useTP2           = input.bool(true, "Use TP2 (50/50 split)", group="Targets")
 
 // ═══════════════════════════════════════════════════════════
 // CALCULATIONS
@@ -116,12 +122,7 @@ if stochExitedOvs
 if stochExitedOvb
     supportLine := lastCompletedOvsLow
 
-// --- 2C: ตัดภูเขา (RSI Reset) ---
-if rsiEnteredOvb or rsiEnteredOvs
-    resistanceLine := na
-    supportLine    := na
-    lastCompletedOvbHigh := na
-    lastCompletedOvsLow  := na
+// v2.3: REMOVED — RSI extreme alone no longer wipes base zone
 
 // --- 2D: วาดกรอบปรับฐาน (Price Scale — overlay=true) ---
 var line resistanceLineObj = na
@@ -172,13 +173,7 @@ if stochExitedOvs
     if not na(prevTroughInZone) and not na(currentTroughInZone)
         hasHigherLow := currentTroughInZone > prevTroughInZone
 
-if rsiEnteredOvb or rsiEnteredOvs
-    prevPeakInZone      := na
-    currentPeakInZone   := na
-    hasLowerHigh        := false
-    prevTroughInZone    := na
-    currentTroughInZone := na
-    hasHigherLow        := false
+// v2.3: REMOVED — peak/trough state no longer wiped on RSI extreme alone
 
 // --- 3B: ตรวจจับ Breakout (ใช้ราคาปิด close ทะลุราคาจริง!) ---
 breakoutUp   = not na(resistanceLine) and close > resistanceLine and close[1] <= resistanceLine
@@ -310,18 +305,7 @@ if trendInvalidated
     trendExtremePrice := na
     label.new(bar_index, close, "INVALIDATED", style=label.style_xcross, color=color.gray, textcolor=color.white, size=size.small)
 
-if rsiEnteredOvb or rsiEnteredOvs
-    trendActive       := false
-    trendDirection    := 0
-    trendType         := na
-    fiboHead          := na
-    fiboEnd           := na
-    fibo0618          := na
-    fibo1618          := na
-    fibo2000          := na
-    fibo2618          := na
-    fibo4236          := na
-    trendExtremePrice := na
+// v2.3: REMOVED — trend state no longer wiped on RSI extreme alone
 
 // --- 4G: วาดเส้น Fibo Levels (Price Scale — ถูกสเกลบนกราฟแท่งเทียน) ---
 var line fiboLine1618 = na
@@ -524,106 +508,183 @@ if trendActive and not na(fibo1618)
         fiboLbl4236  := label.new(bar_index + 5, fibo4236, "4.236 *CLUSTER*", style=label.style_none, textcolor=color.new(#FFD700, 0), size=size.small)
 
 // ═══════════════════════════════════════════════════════════
-// STEP 7: ENTRY TRIGGER & RISK MANAGEMENT
+// STEP 7: ENTRY TRIGGER & RISK MANAGEMENT (Synced from Strategy v2.7)
 // ═══════════════════════════════════════════════════════════
 
-// --- 7A: Trailing Stop (ATR-based) ---
-atrVal = ta.atr(trailingAtrLen)
+var bool stochReachedOvsAfterTrend = false  // long path
+var bool stochReachedOvbAfterTrend = false  // short path
 
-var float trailingStopLong  = na  // trailing stop สำหรับ Long (วิ่งตามราคาขึ้น)
-var float trailingStopShort = na  // trailing stop สำหรับ Short (วิ่งตามราคาลง)
+if breakoutUp or breakoutDown
+    stochReachedOvsAfterTrend := false
+    stochReachedOvbAfterTrend := false
 
-// Long trailing: close - ATR*mult, ขยับขึ้นได้อย่างเดียว
-rawTsLong = close - atrVal * trailingAtrMult
+if trendActive and trendDirection == 1 and stochInOvs
+    stochReachedOvsAfterTrend := true
+if trendActive and trendDirection == -1 and stochInOvb
+    stochReachedOvbAfterTrend := true
+
+if trendInvalidated
+    stochReachedOvsAfterTrend := false
+    stochReachedOvbAfterTrend := false
+
+var float swingLow         = na
+var float swingHigh        = na
+var float preSwingLowHigh  = na
+var float preSwingHighLow  = na
+var bool longSetupConsumed  = false
+var bool shortSetupConsumed = false
+
+if trendInvalidated or breakoutUp or breakoutDown
+    swingLow := na
+    swingHigh := na
+    preSwingLowHigh := na
+    preSwingHighLow := na
+    longSetupConsumed := false
+    shortSetupConsumed := false
+
+var int currentPos = 0
+var string currentEntryId = na
+var float currentEntryPrice = na
+var float currentSLPrice = na
+
+if trendActive and trendDirection == 1 and stochReachedOvsAfterTrend and currentPos == 0
+    if na(swingLow) or low < swingLow
+        swingLow := low
+        preSwingLowHigh := high[1]
+        longSetupConsumed := false
+
+if trendActive and trendDirection == -1 and stochReachedOvbAfterTrend and currentPos == 0
+    if na(swingHigh) or high > swingHigh
+        swingHigh := high
+        preSwingHighLow := low[1]
+        shortSetupConsumed := false
+
+longEntryCondition = trendActive and trendDirection == 1 and stochReachedOvsAfterTrend and not longSetupConsumed and not na(preSwingLowHigh) and close > preSwingLowHigh
+shortEntryCondition = trendActive and trendDirection == -1 and stochReachedOvbAfterTrend and not shortSetupConsumed and not na(preSwingHighLow) and close < preSwingHighLow
+
+longEntryRaw  = longEntryCondition  and currentPos == 0
+shortEntryRaw = shortEntryCondition and currentPos == 0
+
+atrVal = ta.atr(atrLength)
+calcLongSL()  => not na(swingLow)  ? swingLow  - atrVal * atrBufferMult : low  - atrVal * atrBufferMult
+calcShortSL() => not na(swingHigh) ? swingHigh + atrVal * atrBufferMult : high + atrVal * atrBufferMult
+
+calcRR(string side, float entryPrice, float slPrice, float tpPrice) =>
+    risk = math.abs(entryPrice - slPrice)
+    reward = side == "Long" ? tpPrice - entryPrice : entryPrice - tpPrice
+    risk > 0 and reward > 0 ? reward / risk : 0.0
+
+tp1FiboLevel = trendType == "PERFECT" ? tpPerfect1 : tpVShape1
+tp2FiboLevel = trendType == "PERFECT" ? tpPerfect2 : tpVShape2
+tp1Val = trendActive and not na(fiboHead) and not na(fiboEnd) ? fiboLevel(fiboHead, fiboEnd, tp1FiboLevel) : na
+tp2Val = trendActive and not na(fiboHead) and not na(fiboEnd) ? fiboLevel(fiboHead, fiboEnd, tp2FiboLevel) : na
+
+longEntry = false
+if longEntryRaw and not na(tp1Val)
+    sl = calcLongSL()
+    if calcRR("Long", close, sl, tp1Val) >= rrMinimum
+        longEntry := true
+
+shortEntry = false
+if shortEntryRaw and not na(tp1Val)
+    sl = calcShortSL()
+    if calcRR("Short", close, sl, tp1Val) >= rrMinimum
+        shortEntry := true
+
+var float currentTP1 = na
+var float currentTP2 = na
+
+if longEntry
+    longSetupConsumed := true
+    currentPos := 1
+    currentEntryPrice := close
+    currentSLPrice := calcLongSL()
+    currentEntryId := "Long"
+    currentTP1 := tp1Val
+    currentTP2 := useTP2 ? tp2Val : na
+    label.new(bar_index, low, "BUY", style=label.style_label_up, color=color.new(#00E676, 0), textcolor=color.white, size=size.normal)
+    line.new(bar_index, currentSLPrice, bar_index + 30, currentSLPrice, color=color.new(color.red, 0), width=1, style=line.style_solid)
+    label.new(bar_index + 30, currentSLPrice, "SL " + str.tostring(currentSLPrice, format.mintick), style=label.style_none, textcolor=color.red, size=size.tiny)
+
+if shortEntry
+    shortSetupConsumed := true
+    currentPos := -1
+    currentEntryPrice := close
+    currentSLPrice := calcShortSL()
+    currentEntryId := "Short"
+    currentTP1 := tp1Val
+    currentTP2 := useTP2 ? tp2Val : na
+    label.new(bar_index, high, "SELL", style=label.style_label_down, color=color.new(#FF5252, 0), textcolor=color.white, size=size.normal)
+    line.new(bar_index, currentSLPrice, bar_index + 30, currentSLPrice, color=color.new(color.red, 0), width=1, style=line.style_solid)
+    label.new(bar_index + 30, currentSLPrice, "SL " + str.tostring(currentSLPrice, format.mintick), style=label.style_none, textcolor=color.red, size=size.tiny)
+
+var bool partialClosedThisOvbCycle = false
+var bool partialClosedThisOvsCycle = false
+
+if stochExitedOvb
+    partialClosedThisOvbCycle := false
+if stochExitedOvs
+    partialClosedThisOvsCycle := false
+
+partialClosedLongThisBar  = false
+partialClosedShortThisBar = false
+
+if useSmartPartialExit and currentPos != 0
+    inLongProfit  = currentPos == 1 and close > currentEntryPrice
+    bearishReversal = close < low[1]
+    if inLongProfit and stochInOvb and bearishReversal and not partialClosedThisOvbCycle
+        partialClosedThisOvbCycle := true
+        partialClosedLongThisBar := true
+
+    inShortProfit  = currentPos == -1 and close < currentEntryPrice
+    bullishReversal = close > high[1]
+    if inShortProfit and stochInOvs and bullishReversal and not partialClosedThisOvsCycle
+        partialClosedThisOvsCycle := true
+        partialClosedShortThisBar := true
+
+var float trailingStopLong  = na
+var float trailingStopShort = na
+
 if trendActive and trendDirection == 1
-    trailingStopLong := na(trailingStopLong) ? rawTsLong : math.max(trailingStopLong, rawTsLong)
+    if not na(lastCompletedOvsLow)
+        trailingStopLong := na(trailingStopLong) ? lastCompletedOvsLow : math.max(trailingStopLong, lastCompletedOvsLow)
 else
     trailingStopLong := na
 
-// Short trailing: close + ATR*mult, ขยับลงได้อย่างเดียว
-rawTsShort = close + atrVal * trailingAtrMult
 if trendActive and trendDirection == -1
-    trailingStopShort := na(trailingStopShort) ? rawTsShort : math.min(trailingStopShort, rawTsShort)
+    if not na(lastCompletedOvbHigh)
+        trailingStopShort := na(trailingStopShort) ? lastCompletedOvbHigh : math.min(trailingStopShort, lastCompletedOvbHigh)
 else
     trailingStopShort := na
 
-// --- 7B: Candlestick Reversal Patterns ---
-// Bullish Pin Bar: ไส้เทียนล่างยาว > 2x body, ปิดครึ่งบน
-bodySize     = math.abs(close - open)
-upperWick    = high - math.max(close, open)
-lowerWick    = math.min(close, open) - low
-candleRange  = high - low
+if currentPos == 1
+    if close < currentSLPrice or (not na(trailingStopLong) and close < trailingStopLong) or trendInvalidated
+        currentPos := 0
+    else if not na(currentTP2) and high >= currentTP2
+        currentPos := 0
+    else if na(currentTP2) and not na(currentTP1) and high >= currentTP1
+        currentPos := 0
 
-bullishPinBar  = candleRange > 0 and lowerWick > bodySize * 2 and close > (high + low) / 2
-bearishPinBar  = candleRange > 0 and upperWick > bodySize * 2 and close < (high + low) / 2
+if currentPos == -1
+    if close > currentSLPrice or (not na(trailingStopShort) and close > trailingStopShort) or trendInvalidated
+        currentPos := 0
+    else if not na(currentTP2) and low <= currentTP2
+        currentPos := 0
+    else if na(currentTP2) and not na(currentTP1) and low <= currentTP1
+        currentPos := 0
 
-// Bullish Engulfing: แท่งก่อนลง + แท่งนี้ครอบทั้ง body
-bullishEngulf  = close[1] < open[1] and close > open and open <= close[1] and close >= open[1]
-bearishEngulf  = close[1] > open[1] and close < open and open >= close[1] and close <= open[1]
+if currentPos == 0
+    currentEntryId := na
+    partialClosedThisOvbCycle := false
+    partialClosedThisOvsCycle := false
+    currentTP1 := na
+    currentTP2 := na
 
-// รวม reversal signals
-bullishReversal = bullishPinBar or bullishEngulf
-bearishReversal = bearishPinBar or bearishEngulf
+plot(low  - atrVal * atrBufferMult, title="Long SL band (ATR)",  color=color.new(color.lime, 50), style=plot.style_line, linewidth=1)
+plot(high + atrVal * atrBufferMult, title="Short SL band (ATR)", color=color.new(color.red,  50), style=plot.style_line, linewidth=1)
 
-// --- 7C: Entry Conditions ---
-// Entry ได้เมื่อ Trend ยัง active เท่านั้น
-
-// Long Entry: trend ขาขึ้น + (แท่งกลับตัวขึ้น หรือ close ทะลุ trailing stop ขึ้น)
-longEntry = trendActive and trendDirection == 1 and
-     (bullishReversal or (not na(trailingStopLong) and close > trailingStopLong and close[1] <= trailingStopLong))
-
-// Short Entry: trend ขาลง + (แท่งกลับตัวลง หรือ close ทะลุ trailing stop ลง)
-shortEntry = trendActive and trendDirection == -1 and
-     (bearishReversal or (not na(trailingStopShort) and close < trailingStopShort and close[1] >= trailingStopShort))
-
-// --- 7D: Stop Loss ---
-var float activeSL     = na
-var int   activeSLBar  = na
-var int   activeSLDir  = 0  // +1 = long SL, -1 = short SL
-
-if longEntry
-    activeSL    := low   // SL = Low ของแท่ง entry
-    activeSLBar := bar_index
-    activeSLDir := 1
-
-if shortEntry
-    activeSL    := high  // SL = High ของแท่ง entry
-    activeSLBar := bar_index
-    activeSLDir := -1
-
-// SL ถูก hit → clear
-if activeSLDir == 1 and not na(activeSL) and close < activeSL
-    activeSL    := na
-    activeSLDir := 0
-if activeSLDir == -1 and not na(activeSL) and close > activeSL
-    activeSL    := na
-    activeSLDir := 0
-
-// Clear SL เมื่อ trend จบ
-if not trendActive
-    activeSL    := na
-    activeSLDir := 0
-
-// --- 7E: วาด Entry Labels + SL Lines ---
-if longEntry
-    label.new(bar_index, low, "BUY", style=label.style_label_up,
-         color=color.new(#00E676, 0), textcolor=color.white, size=size.normal)
-    line.new(bar_index, low, bar_index + slLineLength, low,
-         color=color.new(color.red, 0), width=2, style=line.style_solid)
-    label.new(bar_index + slLineLength, low, "SL " + str.tostring(low, format.mintick),
-         style=label.style_none, textcolor=color.red, size=size.tiny)
-
-if shortEntry
-    label.new(bar_index, high, "SELL", style=label.style_label_down,
-         color=color.new(#FF5252, 0), textcolor=color.white, size=size.normal)
-    line.new(bar_index, high, bar_index + slLineLength, high,
-         color=color.new(color.red, 0), width=2, style=line.style_solid)
-    label.new(bar_index + slLineLength, high, "SL " + str.tostring(high, format.mintick),
-         style=label.style_none, textcolor=color.red, size=size.tiny)
-
-// --- 7F: Plot Trailing Stop ---
-plot(trailingStopLong,  title="Trailing Stop Long",  color=color.new(#00E676, 50), style=plot.style_stepline, linewidth=1)
-plot(trailingStopShort, title="Trailing Stop Short", color=color.new(#FF5252, 50), style=plot.style_stepline, linewidth=1)
+plotshape(partialClosedLongThisBar,  title="Long partial close",  location=location.abovebar, color=color.new(color.orange, 0), style=shape.diamond, size=size.tiny)
+plotshape(partialClosedShortThisBar, title="Short partial close", location=location.belowbar, color=color.new(color.orange, 0), style=shape.diamond, size=size.tiny)
 
 // ═══════════════════════════════════════════════════════════
 // ZONE BACKGROUND (ช่วย debug — จะเห็นเป็นสีจางๆ บนกราฟหลัก)

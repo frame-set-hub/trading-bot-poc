@@ -92,6 +92,33 @@ HTF (e.g., 1H) trend reversal can be confirmed two ways:
 
 Path (b) gives an earlier entry without waiting for HTF candle close. Defer to Phase 3 since it requires MTF state plumbing already planned for V-SHAPE recovery.
 
+### 2.8 Smart Partial Exit — Stoch Extreme + Reversal (Phase 1 lock-in, Step 3c)
+Take 50% off the table when an early reversal forms before TP1 — prevents trailing SL from giving back unrealized gains.
+
+**Trigger (Long):**
+- Position open & in profit (`close > entry`)
+- Stoch %K ≥ OVB level (≥ 80)
+- Bearish reversal candle on current bar: `close < low[1]`
+- Not already partial-closed during this Stoch OVB cycle
+
+**Trigger (Short, symmetric):**
+- Position open & in profit
+- Stoch %K ≤ OVS level (≤ 20)
+- Bullish reversal: `close > high[1]`
+- Not already partial-closed during this Stoch OVS cycle
+
+**Action:** `strategy.close(currentEntryId, qty_percent=50, comment="Stoch <OVB|OVS> partial")`
+
+**Why:** trailing SL (Stoch-swing-based) only ratchets when a NEW Stoch cycle completes. In the gap, a reversal can roll the trade from green → small profit / breakeven before trailing fires. Locking 50% at the reversal:
+1. Captures real profit even if TP1 never reached
+2. Leaves 50% runner for Fibo targets if reversal is a fakeout
+3. Mirrors mentor Clip 11's "HTF oscillator soft-exit" — but on the trade's own TF (no MTF wiring)
+
+**Edge cases:**
+- Re-trigger guard: `partialClosedThisOvbCycle` (long) / `partialClosedThisOvsCycle` (short). Reset on `stochExitedOvb` / `stochExitedOvs`.
+- Order vs TP1: if TP1 hits first then partial fires → closes 50% of remainder = 25% of original. Acceptable additional lock.
+- Toggle: `useSmartPartialExit` input (default ON).
+
 ---
 
 ## 3. POC Success Criteria

@@ -1,20 +1,73 @@
 // This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
 // © trading-bot-poc
 //
-// === Phase 1 Strategy v2 — Steps 1-3 only ===
-// Implements: §2.1 Entry (pullback + Stoch K-cross-D + close>high[1])
+// === Phase 1 Strategy v2.7 — Smart Partial Exit at Stoch extreme + reversal (Step 3c) ===
+// v2.6 → v2.7:
+//   Added smart partial exit — close 50% when:
+//     Long  : in profit + Stoch ≥80 (OVB) + bearish reversal (close < low[1])
+//     Short : in profit + Stoch ≤20 (OVS) + bullish reversal (close > high[1])
+//   Prevents Trailing SL from giving back unrealized gains.
+//   Re-trigger guarded by per-cycle flags (reset on stochExitedOvb/Ovs).
+//   Visual: orange diamond marker at partial-close bar.
+//   Toggle: useSmartPartialExit input (default ON).
+//
+// === Phase 1 Strategy v2.6 — Correct reversal candle + ATR SL band on chart ===
+// Implements: §2.1 Entry (close > preSwingLowHigh — high of bar BEFORE swing low)
+//             §2.2 SL with ATR buffer (swingLow - 0.5×ATR)
 //             §2.3 Risk-based sizing (1% per trade, NOT 100% equity)
-//             §2.2 SL with ATR buffer (low - 0.5×ATR)
+//             RR ≥ 3 filter (signed, blocks wrong-direction TPs)
+//             §3b: Adaptive TP — PERFECT 1.618/2.618 vs V-SHAPE 1.5/2.0
+//             Persistent entry/TP/SL labels (toggle), ATR info table + ATR SL bands plotted on chart
+//             Trade tags include -P / -V suffix → Strategy Tester shows breakdown by trend type
+//
+// v2.5 → v2.6:
+//   1. Fixed entry trigger to use preSwingLowHigh (high of bar BEFORE swing low) instead of high[1]
+//      — matches mentor's literal rule "การเบรกแท่งก่อนหน้าของแท่งต่ำสุด"
+//   2. Added ATR-based SL bands as plot lines on chart (lime below price = Long SL, red above = Short SL)
+//      — visible on every bar, easier to eyeball SL distance for manual trades
+//
+// v2.4 → v2.5 (Adaptive TP):
+//   PERFECT trend has ~65-70% follow-through → can wait for full Golden ratio 1.618
+//   V-SHAPE has <40% follow-through → 1.618 is rejection wall → TP at 1.5 books gains earlier
+//   Expected: V-SHAPE TP1 hit rate > PERFECT TP1 hit rate (closer target)
+//   Trade IDs: "Long-P", "Long-V", "Short-P", "Short-V" → easy stat breakdown
+//
+// v2.3 → v2.4 fix (correct "reversal candle" interpretation):
+//   Problem: v2.3 ใช้ `close > high[1]` → fire ทุกบาร์ที่ราคาขึ้น → 416 trades
+//   Mentor's actual rule (clip 10):
+//     1. Identify swing low (lowest bar after Stoch entered OVS)
+//     2. preSwingLowHigh = high of bar BEFORE swing low
+//     3. "แท่งกลับตัว" = close > preSwingLowHigh
+//     4. SL = swingLow's low - 0.5×ATR
+//     5. Once consumed, requires NEW Stoch OVS entry to re-arm
+//   Fix: rewrite entry trigger to track swing low + use preSwingLowHigh + consume after fire.
+//        Drop Stoch K-cross-D requirement (structural break is the trigger).
+//
+// v2.2 → v2.3 fix (mentor Clip 10 rule alignment):
+//   Problem: RSI extreme alone ลบ trend ทิ้ง → continuation entries ไม่ได้ในเทรนด์แรง
+//   Mentor rule: cut mountain ต่อเมื่อ (Fibo destroyed AND RSI extreme) ไม่ใช่ RSI extreme alone
+//   Fix: ลบ force-close on RSI extreme + ลบ state reset on RSI extreme alone
+//        → trend ยังอยู่ผ่าน minor RSI oscillations → continuation trades ได้
+//
+// v2.1 → v2.2 fix:
+//   Problem: Fibo บาง cycle เล็กเกินไป (เพราะ RSI reset aggressively) → TP1 ใกล้ entry → trade ที่ไม่คุ้ม
+//   Fix: คำนวณ RR = (TP1 - entry) / (entry - SL) ที่ entry bar
+//        block trade ถ้า RR < rrMinimum (default 3.0)
+//        แทนการแก้ swing detection — trust TF, filter at output
+//
+// v2 → v2.1 fix:
+//   Old: stochCrossedUp AND close > high[1] ต้องเกิดบาร์เดียวกัน → entries แทบไม่เกิด
+//   New: stochCrossWindow — Stoch crossed within last N bars + ยังไม่ cross ตรงข้าม
+//        แล้ว fire entry บนบาร์ที่ close > high[1] เกิดในช่วง window
 //
 // NOT YET implemented (next iteration):
-//   Step 3b: Adaptive TP (PERFECT 1.618/2.618 vs V-SHAPE 1.5/2.0)
 //   Step 4 : Sync indicator with strategy
 //   Step 6 : Fibo Shift logic on invalidation
 //
 // Original v1 file `rsi_stoch_strategy.pine` is kept for A/B comparison.
 
 //@version=5
-strategy("RSI+Stoch Fibo Strategy v2", shorttitle="RS Fibo v2", overlay=true,
+strategy("RSI+Stoch Fibo Strategy v2.7", shorttitle="RSF v2.7", overlay=true,
      default_qty_type=strategy.fixed, default_qty_value=1,
      initial_capital=100000, commission_value=0.1, pyramiding=0,
      max_lines_count=500, max_labels_count=500, calc_on_every_tick=false,
@@ -45,14 +98,33 @@ riskPercent      = input.float(1.0, "Risk per trade (%)", minval=0.1, maxval=5.0
 atrLength        = input.int(14, "ATR Length (for SL buffer)", minval=1, group="Risk Management")
 atrBufferMult    = input.float(0.5, "ATR Buffer Multiplier", minval=0.0, maxval=2.0, step=0.1, group="Risk Management",
      tooltip="SL = entry-bar low/high ± ATR × this. Survives stop-hunt wicks. 0.5 default; sweep 0.3-1.5 in WFO.")
+stochCrossWindow = input.int(5, "Stoch Cross Window (bars)", minval=1, maxval=20, group="Risk Management",
+     tooltip="หลัง Stoch K cross D ภายใน N บาร์นี้ ระบบยังถือว่า cross ยังใช้ได้ — รอ close > high[1] เกิดในช่วงนี้ค่อย fire entry. Default 5.")
+rrMinimum        = input.float(3.0, "Minimum Risk:Reward Ratio (RR)", minval=1.0, maxval=10.0, step=0.5, group="Risk Management",
+     tooltip="คำนวณ RR = (TP1 - entry) / (entry - SL) ที่ entry bar. ถ้า RR < this → skip trade (Fibo เล็กเกิน, ไม่คุ้ม). Default 3.0 (1:3).")
 
-// --- TP Levels (Phase 1: same for PERFECT and V-SHAPE — Step 3b will add adaptive) ---
-tp1FiboLevel     = input.float(1.618, "TP1 Fibo Level", minval=0.5, step=0.1, group="Targets")
-tp2FiboLevel     = input.float(2.618, "TP2 Fibo Level", minval=1.0, step=0.1, group="Targets")
+// --- TP Levels (v2.5: adaptive by trend type — PERFECT vs V-SHAPE) ---
+// Rationale: PERFECT trend ~65-70% follow-through → can wait for full Fibo Golden 1.618
+//            V-SHAPE trend <40% follow-through → 1.618 acts as rejection wall → TP closer at 1.5 books gains first
+tpPerfect1       = input.float(1.618, "TP1 PERFECT (Fibo)", minval=0.5, step=0.1, group="Targets",
+     tooltip="PERFECT trend (structural breakout) → TP1 at full Golden Ratio 1.618")
+tpPerfect2       = input.float(2.618, "TP2 PERFECT (Fibo)", minval=1.0, step=0.1, group="Targets")
+tpVShape1        = input.float(1.5,   "TP1 V-SHAPE (Fibo)", minval=0.5, step=0.05, group="Targets",
+     tooltip="V-SHAPE trend (no structural confirm) → TP1 at 1.5, before the 1.618 rejection wall")
+tpVShape2        = input.float(2.0,   "TP2 V-SHAPE (Fibo)", minval=1.0, step=0.1, group="Targets")
 useTP2           = input.bool(true, "Use TP2 (50/50 split)", group="Targets",
      tooltip="ON: 50% close at TP1, 50% at TP2. OFF: 100% close at TP1.")
 
+useSmartPartialExit = input.bool(true, "Smart Partial Exit (Stoch extreme + reversal)", group="Targets",
+     tooltip="ON: ปิด 50% เมื่อ Long มีกำไร + Stoch ≥80 + แท่งกลับตัวลง (close<low[1]). กัน Trailing SL กลืนกำไร. Symmetric สำหรับ Short.")
+
 tradeDirection   = input.string("Both", "Trade Direction", options=["Long", "Short", "Both"], group="Targets")
+
+// --- Visual ---
+showEntryBox     = input.bool(false, "Show entry summary box (big green/red label)", group="Visual",
+     tooltip="ปิดเพื่อไม่ให้ label บัง chart — ใช้ price บนเส้น TP/SL อ่านแทน")
+showAtrInfo      = input.bool(true, "Show ATR info label (top-right)", group="Visual",
+     tooltip="แสดง ATR(14) ปัจจุบันที่มุมขวาบน เพื่อคิด SL = low - 0.5×ATR ได้ง่าย")
 
 // ═══════════════════════════════════════════════════════════
 // CALCULATIONS
@@ -124,11 +196,8 @@ if stochExitedOvs
 if stochExitedOvb
     supportLine := lastCompletedOvsLow
 
-if rsiEnteredOvb or rsiEnteredOvs
-    resistanceLine := na
-    supportLine    := na
-    lastCompletedOvbHigh := na
-    lastCompletedOvsLow  := na
+// v2.3: REMOVED — RSI extreme alone no longer wipes base zone (mentor rule: only cut on Fibo destroyed AND RSI extreme)
+// Base zone stays alive across minor RSI oscillations → continuation entries possible
 
 // ═══════════════════════════════════════════════════════════
 // STEP 3: TREND RECOGNITION (unchanged from v1)
@@ -153,13 +222,7 @@ if stochExitedOvs
     if not na(prevTroughInZone) and not na(currentTroughInZone)
         hasHigherLow := currentTroughInZone > prevTroughInZone
 
-if rsiEnteredOvb or rsiEnteredOvs
-    prevPeakInZone := na
-    currentPeakInZone := na
-    hasLowerHigh := false
-    prevTroughInZone := na
-    currentTroughInZone := na
-    hasHigherLow := false
+// v2.3: REMOVED — peak/trough state no longer wiped on RSI extreme alone
 
 breakoutUp   = not na(resistanceLine) and close > resistanceLine and close[1] <= resistanceLine
 breakoutDown = not na(supportLine)    and close < supportLine    and close[1] >= supportLine
@@ -247,17 +310,7 @@ if trendInvalidated
     fibo4236 := na
     trendExtremePrice := na
 
-if rsiEnteredOvb or rsiEnteredOvs
-    trendActive := false
-    trendDirection := 0
-    trendType := na
-    fiboHead := na
-    fiboEnd := na
-    fibo0618 := na
-    fibo1618 := na
-    fibo2618 := na
-    fibo4236 := na
-    trendExtremePrice := na
+// v2.3: REMOVED — trend state no longer wiped on RSI extreme alone (mentor Path A: cut only when Fibo destroyed AND RSI extreme — already covered by trendInvalidated above)
 
 // ═══════════════════════════════════════════════════════════
 // STEP 5 [v2 NEW]: PULLBACK + STOCH ENTRY STATE
@@ -279,35 +332,71 @@ if trendActive and trendDirection == 1 and stochInOvs
 if trendActive and trendDirection == -1 and stochInOvb
     stochReachedOvbAfterTrend := true
 
-// Reset on RSI extreme or invalidation
-if rsiEnteredOvb or rsiEnteredOvs or trendInvalidated
+// v2.3: Reset only on actual trend invalidation (RSI extreme alone no longer resets)
+if trendInvalidated
     stochReachedOvsAfterTrend := false
     stochReachedOvbAfterTrend := false
 
-// Stoch K cross D events
+// Stoch K cross D events (kept for visualization only — no longer required for entry in v2.4)
 stochCrossedUp   = ta.crossover(k, d)
 stochCrossedDown = ta.crossunder(k, d)
 
 // ═══════════════════════════════════════════════════════════
-// STEP 6 [v2 NEW]: ENTRY CONDITIONS
-// Long  : trend up   + Stoch reached OVS + Stoch K-cross-D up   + close > high[1]
-// Short : trend down + Stoch reached OVB + Stoch K-cross-D down + close < low[1]
+// STEP 5b [v2.4 FIX]: SWING LOW / SWING HIGH TRACKING & REVERSAL CANDLE
+// "แท่งกลับตัว = close ทะลุ high ของแท่งก่อนหน้า" (Reversal = break high of previous bar)
+// ═══════════════════════════════════════════════════════════
+
+var float swingLow         = na   // lowest low since current pullback started (for SL + reversal anchor)
+var float swingHigh        = na   // highest high since current pullback started
+var float preSwingLowHigh  = na   // v2.6: high of bar BEFORE swing-low bar — the "ปากซอง" to break for reversal candle
+var float preSwingHighLow  = na   // v2.6: low  of bar BEFORE swing-high bar — for short reversal
+
+var bool longSetupConsumed  = false  // true after reversal candle triggers; prevents chasing
+var bool shortSetupConsumed = false
+
+// Reset state on trend invalidation or new breakout
+if trendInvalidated or breakoutUp or breakoutDown
+    swingLow := na
+    swingHigh := na
+    preSwingLowHigh := na
+    preSwingHighLow := na
+    longSetupConsumed := false
+    shortSetupConsumed := false
+
+// Long: Track lowest point + capture pre-swing-low high (the bar BEFORE the swing low)
+if trendActive and trendDirection == 1 and stochReachedOvsAfterTrend and strategy.position_size == 0
+    if na(swingLow) or low < swingLow
+        swingLow := low
+        preSwingLowHigh := high[1]    // v2.6: high of bar BEFORE this new swing low
+        longSetupConsumed := false    // Re-arm if price makes a new low (prior reversal was fakeout)
+
+// Short: Track highest point + capture pre-swing-high low
+if trendActive and trendDirection == -1 and stochReachedOvbAfterTrend and strategy.position_size == 0
+    if na(swingHigh) or high > swingHigh
+        swingHigh := high
+        preSwingHighLow := low[1]
+        shortSetupConsumed := false
+
+// ═══════════════════════════════════════════════════════════
+// STEP 6 [v2.4 FIX]: ENTRY CONDITIONS
 // ═══════════════════════════════════════════════════════════
 
 allowLong  = tradeDirection == "Long"  or tradeDirection == "Both"
 allowShort = tradeDirection == "Short" or tradeDirection == "Both"
 
+// v2.6: reversal candle = close ทะลุ high ของบาร์ "ก่อนหน้า swing low" (preSwingLowHigh)
+//       ไม่ใช่ high[1] บาร์ก่อนหน้าเฉยๆ (เก่า v2.4) — เป็น event เฉพาะต่อ pullback
 longEntryCondition = trendActive and trendDirection == 1
      and stochReachedOvsAfterTrend
-     and stochCrossedUp
-     and close > high[1]
-     and not stochInOvb
+     and not longSetupConsumed
+     and not na(preSwingLowHigh)
+     and close > preSwingLowHigh
 
 shortEntryCondition = trendActive and trendDirection == -1
      and stochReachedOvbAfterTrend
-     and stochCrossedDown
-     and close < low[1]
-     and not stochInOvs
+     and not shortSetupConsumed
+     and not na(preSwingHighLow)
+     and close < preSwingHighLow
 
 longEntry  = allowLong  and longEntryCondition  and strategy.position_size == 0
 shortEntry = allowShort and shortEntryCondition and strategy.position_size == 0
@@ -318,15 +407,19 @@ shortEntry = allowShort and shortEntryCondition and strategy.position_size == 0
 // qty = (equity × risk%) / |entry − SL|
 // ═══════════════════════════════════════════════════════════
 
-calcLongSL()  => low  - atrVal * atrBufferMult
-calcShortSL() => high + atrVal * atrBufferMult
+// v2.4: SL uses swing low/high (not entry-bar low/high) — proper "stop below the structural pivot"
+calcLongSL()  => not na(swingLow)  ? swingLow  - atrVal * atrBufferMult : low  - atrVal * atrBufferMult
+calcShortSL() => not na(swingHigh) ? swingHigh + atrVal * atrBufferMult : high + atrVal * atrBufferMult
 
 calcRiskQty(float entryPrice, float slPrice) =>
     stopDist = math.abs(entryPrice - slPrice)
     riskCash = strategy.equity * riskPercent / 100.0
     stopDist > 0 ? riskCash / stopDist : 0.0
 
-// TP levels (computed once per bar)
+// v2.5: TP levels adaptive by trend type
+// PERFECT → 1.618 / 2.618 | V-SHAPE → 1.5 / 2.0 (configurable above)
+tp1FiboLevel = trendType == "PERFECT" ? tpPerfect1 : tpVShape1
+tp2FiboLevel = trendType == "PERFECT" ? tpPerfect2 : tpVShape2
 tp1Val = trendActive and not na(fiboHead) and not na(fiboEnd) ? fiboLevel(fiboHead, fiboEnd, tp1FiboLevel) : na
 tp2Val = trendActive and not na(fiboHead) and not na(fiboEnd) ? fiboLevel(fiboHead, fiboEnd, tp2FiboLevel) : na
 
@@ -334,31 +427,137 @@ tp2Val = trendActive and not na(fiboHead) and not na(fiboEnd) ? fiboLevel(fiboHe
 // STEP 8: STRATEGY ORDERS
 // ═══════════════════════════════════════════════════════════
 
+// v2.4 fix: RR filter — block trade when reward is wrong direction OR ratio < rrMinimum
+// For Long  : tpPrice MUST be > entryPrice (otherwise reward is negative, blocked)
+// For Short : tpPrice MUST be < entryPrice
+calcRR(string side, float entryPrice, float slPrice, float tpPrice) =>
+    risk = math.abs(entryPrice - slPrice)
+    reward = side == "Long" ? tpPrice - entryPrice : entryPrice - tpPrice
+    risk > 0 and reward > 0 ? reward / risk : 0.0
+
 var float entrySL = na
+var float lastBlockedRR = na    // track skipped trades for visualization
+var string currentEntryId = na  // v2.7: track current entry tag (Long-P / Short-V / etc.) for partial close
+var bool partialClosedThisOvbCycle = false  // v2.7: prevent multiple partial closes during one OVB visit
+var bool partialClosedThisOvsCycle = false
+
+// v2.2 helper: draw persistent entry/TP/SL markers on the chart at entry bar
+// Lines extend ~30 bars forward (not extend.right — avoid future clutter)
+drawTradeMarkers(string side, float entryPrice, float slPrice, float tp1Price, float tp2Price, bool drawTp2) =>
+    barFwd = 30
+    redCol = color.new(color.red, 0)
+    tp1Col = color.new(#FF9800, 20)
+    tp2Col = color.new(#F44336, 20)
+    entryCol = side == "Long" ? color.new(color.lime, 0) : color.new(color.red, 0)
+
+    // SL line + label
+    line.new(bar_index, slPrice, bar_index + barFwd, slPrice, color=redCol, width=1, style=line.style_solid)
+    label.new(bar_index + barFwd, slPrice, "SL " + str.tostring(slPrice, format.mintick), style=label.style_none, textcolor=redCol, size=size.tiny)
+
+    // TP1 line + label
+    line.new(bar_index, tp1Price, bar_index + barFwd, tp1Price, color=tp1Col, width=1, style=line.style_dashed)
+    label.new(bar_index + barFwd, tp1Price, "TP1 " + str.tostring(tp1Price, format.mintick), style=label.style_none, textcolor=tp1Col, size=size.tiny)
+
+    // TP2 line + label (optional)
+    if drawTp2 and not na(tp2Price)
+        line.new(bar_index, tp2Price, bar_index + barFwd, tp2Price, color=tp2Col, width=1, style=line.style_dashed)
+        label.new(bar_index + barFwd, tp2Price, "TP2 " + str.tostring(tp2Price, format.mintick), style=label.style_none, textcolor=tp2Col, size=size.tiny)
+
+    // Entry summary label at entry bar — toggle via input
+    if showEntryBox
+        rrTxt = str.tostring(math.round(math.abs(tp1Price - entryPrice) / math.abs(entryPrice - slPrice) * 100) / 100)
+        tp2Line = drawTp2 and not na(tp2Price) ? "\nTP2 " + str.tostring(tp2Price, format.mintick) : ""
+        txt = side + " @ " + str.tostring(entryPrice, format.mintick) +
+              "\nSL  " + str.tostring(slPrice, format.mintick) +
+              "\nTP1 " + str.tostring(tp1Price, format.mintick) +
+              tp2Line +
+              "\nRR  " + rrTxt
+        if side == "Long"
+            label.new(bar_index, low, txt, style=label.style_label_up, color=entryCol, textcolor=color.white, size=size.small)
+        else
+            label.new(bar_index, high, txt, style=label.style_label_down, color=entryCol, textcolor=color.white, size=size.small)
 
 if longEntry and not na(tp1Val)
     sl  = calcLongSL()
-    qty = calcRiskQty(close, sl)
-    if qty > 0
-        entrySL := sl
-        strategy.entry("Long", strategy.long, qty=qty)
-        if useTP2 and not na(tp2Val)
-            strategy.exit("Long TP1", "Long", qty_percent=50, limit=tp1Val, stop=entrySL)
-            strategy.exit("Long TP2", "Long", limit=tp2Val, stop=entrySL)
-        else
-            strategy.exit("Long TP1", "Long", limit=tp1Val, stop=entrySL)
+    rr  = calcRR("Long", close, sl, tp1Val)
+    longSetupConsumed := true   // Consume the setup on the first reversal candle (prevent chasing)
+    if rr >= rrMinimum
+        qty = calcRiskQty(close, sl)
+        if qty > 0
+            entrySL := sl
+            // v2.5: tag entry with trend type so Strategy Tester shows P (PERFECT) vs V (V-SHAPE)
+            tagSuffix = trendType == "PERFECT" ? "-P" : "-V"
+            entryId = "Long" + tagSuffix
+            currentEntryId := entryId  // v2.7: remember for partial-close
+            partialClosedThisOvbCycle := false
+            strategy.entry(entryId, strategy.long, qty=qty)
+            if useTP2 and not na(tp2Val)
+                strategy.exit(entryId + " TP1", entryId, qty_percent=50, limit=tp1Val, stop=entrySL)
+                strategy.exit(entryId + " TP2", entryId, limit=tp2Val, stop=entrySL)
+            else
+                strategy.exit(entryId + " TP1", entryId, limit=tp1Val, stop=entrySL)
+            drawTradeMarkers("Long", close, sl, tp1Val, tp2Val, useTP2)
+    else
+        lastBlockedRR := rr
 
 if shortEntry and not na(tp1Val)
     sl  = calcShortSL()
-    qty = calcRiskQty(close, sl)
-    if qty > 0
-        entrySL := sl
-        strategy.entry("Short", strategy.short, qty=qty)
-        if useTP2 and not na(tp2Val)
-            strategy.exit("Short TP1", "Short", qty_percent=50, limit=tp1Val, stop=entrySL)
-            strategy.exit("Short TP2", "Short", limit=tp2Val, stop=entrySL)
-        else
-            strategy.exit("Short TP1", "Short", limit=tp1Val, stop=entrySL)
+    rr  = calcRR("Short", close, sl, tp1Val)
+    shortSetupConsumed := true  // Consume the setup on the first reversal candle (prevent chasing)
+    if rr >= rrMinimum
+        qty = calcRiskQty(close, sl)
+        if qty > 0
+            entrySL := sl
+            // v2.5: tag entry with trend type so Strategy Tester shows P (PERFECT) vs V (V-SHAPE)
+            tagSuffix = trendType == "PERFECT" ? "-P" : "-V"
+            entryId = "Short" + tagSuffix
+            currentEntryId := entryId  // v2.7: remember for partial-close
+            partialClosedThisOvsCycle := false
+            strategy.entry(entryId, strategy.short, qty=qty)
+            if useTP2 and not na(tp2Val)
+                strategy.exit(entryId + " TP1", entryId, qty_percent=50, limit=tp1Val, stop=entrySL)
+                strategy.exit(entryId + " TP2", entryId, limit=tp2Val, stop=entrySL)
+            else
+                strategy.exit(entryId + " TP1", entryId, limit=tp1Val, stop=entrySL)
+            drawTradeMarkers("Short", close, sl, tp1Val, tp2Val, useTP2)
+    else
+        lastBlockedRR := rr
+
+// ═══════════════════════════════════════════════════════════
+// STEP 8b [v2.7]: SMART PARTIAL EXIT — Stoch extreme + reversal candle
+// ═══════════════════════════════════════════════════════════
+
+// Reset re-trigger guards when Stoch leaves the extreme (allow next cycle to re-fire)
+if stochExitedOvb
+    partialClosedThisOvbCycle := false
+if stochExitedOvs
+    partialClosedThisOvsCycle := false
+
+// Reset everything when no position
+if strategy.position_size == 0
+    currentEntryId := na
+    partialClosedThisOvbCycle := false
+    partialClosedThisOvsCycle := false
+
+partialClosedLongThisBar  = false
+partialClosedShortThisBar = false
+
+if useSmartPartialExit and not na(currentEntryId)
+    // Long: in profit + Stoch in OVB + bearish reversal (close < low[1]) → close 50%
+    inLongProfit  = strategy.position_size > 0 and close > strategy.position_avg_price
+    bearishReversal = close < low[1]
+    if inLongProfit and stochInOvb and bearishReversal and not partialClosedThisOvbCycle
+        strategy.close(currentEntryId, qty_percent=50, comment="Stoch OVB partial")
+        partialClosedThisOvbCycle := true
+        partialClosedLongThisBar := true
+
+    // Short: in profit + Stoch in OVS + bullish reversal (close > high[1]) → close 50%
+    inShortProfit  = strategy.position_size < 0 and close < strategy.position_avg_price
+    bullishReversal = close > high[1]
+    if inShortProfit and stochInOvs and bullishReversal and not partialClosedThisOvsCycle
+        strategy.close(currentEntryId, qty_percent=50, comment="Stoch OVS partial")
+        partialClosedThisOvsCycle := true
+        partialClosedShortThisBar := true
 
 // --- Trailing Stop (Stoch Swing Structure — unchanged from v1) ---
 var float trailingStopLong  = na
@@ -381,12 +580,10 @@ if strategy.position_size > 0 and not na(trailingStopLong) and close < trailingS
 if strategy.position_size < 0 and not na(trailingStopShort) and close > trailingStopShort
     strategy.close_all(comment="Trailing SL")
 
-// --- Force close on invalidation / RSI reset ---
+// --- Force close on invalidation only (v2.3: RSI Reset force-close removed) ---
 if trendInvalidated and strategy.position_size != 0
     strategy.close_all(comment="INVALIDATED")
-
-if (rsiEnteredOvb or rsiEnteredOvs) and strategy.position_size != 0
-    strategy.close_all(comment="RSI Reset")
+// Position now exits via TP1/TP2/SL/Trailing only — no more "RSI Reset" force-close
 
 // ═══════════════════════════════════════════════════════════
 // PLOTTING
@@ -396,45 +593,44 @@ if (rsiEnteredOvb or rsiEnteredOvs) and strategy.position_size != 0
 plotshape(longEntry,  title="Long Entry",  location=location.belowbar, color=color.new(color.lime,0),    style=shape.triangleup,   size=size.small)
 plotshape(shortEntry, title="Short Entry", location=location.abovebar, color=color.new(color.red,0),     style=shape.triangledown, size=size.small)
 
-// Pullback-readiness state (small dot when Stoch reached extreme)
-plotshape(stochReachedOvsAfterTrend and trendActive and trendDirection ==  1, title="Long pullback ready",  location=location.belowbar, color=color.new(color.aqua, 60), style=shape.circle, size=size.tiny)
-plotshape(stochReachedOvbAfterTrend and trendActive and trendDirection == -1, title="Short pullback ready", location=location.abovebar, color=color.new(color.fuchsia, 60), style=shape.circle, size=size.tiny)
+// v2.2: Mark trades blocked by RR filter (small Fibo OR wrong-direction TP) — yellow X
+blockedLong  = longEntry  and not na(tp1Val) and calcRR("Long",  close, calcLongSL(),  tp1Val) < rrMinimum
+blockedShort = shortEntry and not na(tp1Val) and calcRR("Short", close, calcShortSL(), tp1Val) < rrMinimum
+plotshape(blockedLong,  title="Long blocked (RR<min)",  location=location.belowbar, color=color.new(color.yellow, 30), style=shape.xcross, size=size.tiny)
+plotshape(blockedShort, title="Short blocked (RR<min)", location=location.abovebar, color=color.new(color.yellow, 30), style=shape.xcross, size=size.tiny)
 
-// Fibo target / SL lines while in position
-var line fiboLine1618 = na
-var line fiboLine2618 = na
-var label fiboLbl1618 = na
-var label fiboLbl2618 = na
-var line  slLineObj   = na
-var label slLblObj    = na
+// v2.7: Partial-close marker (orange diamond) — Stoch extreme + reversal partial exit fired
+plotshape(partialClosedLongThisBar,  title="Long partial close (Stoch OVB+rev)",  location=location.abovebar, color=color.new(color.orange, 0), style=shape.diamond, size=size.tiny)
+plotshape(partialClosedShortThisBar, title="Short partial close (Stoch OVS+rev)", location=location.belowbar, color=color.new(color.orange, 0), style=shape.diamond, size=size.tiny)
 
-if not na(fiboLine1618)
-    line.delete(fiboLine1618)
-    fiboLine1618 := na
-if not na(fiboLine2618)
-    line.delete(fiboLine2618)
-    fiboLine2618 := na
-if not na(fiboLbl1618)
-    label.delete(fiboLbl1618)
-    fiboLbl1618 := na
-if not na(fiboLbl2618)
-    label.delete(fiboLbl2618)
-    fiboLbl2618 := na
-if not na(slLineObj)
-    line.delete(slLineObj)
-    slLineObj := na
-if not na(slLblObj)
-    label.delete(slLblObj)
-    slLblObj := na
+// Pullback-armed event (flag flipped this bar — Stoch K just touched extreme)
+longArmedThisBar  = stochReachedOvsAfterTrend and not stochReachedOvsAfterTrend[1] and trendActive and trendDirection ==  1
+shortArmedThisBar = stochReachedOvbAfterTrend and not stochReachedOvbAfterTrend[1] and trendActive and trendDirection == -1
+plotshape(longArmedThisBar,  title="Long pullback armed",  location=location.belowbar, color=color.new(color.aqua, 0),    style=shape.circle, size=size.tiny)
+plotshape(shortArmedThisBar, title="Short pullback armed", location=location.abovebar, color=color.new(color.fuchsia, 0), style=shape.circle, size=size.tiny)
 
-if trendActive and not na(tp1Val) and strategy.position_size != 0
-    tpColor1 = color.new(#FF9800, 20)
-    tpColor2 = color.new(#F44336, 20)
-    fiboLine1618 := line.new(bar_index, tp1Val, bar_index + 1, tp1Val, color=tpColor1, width=2, style=line.style_dashed, extend=extend.right)
-    fiboLbl1618  := label.new(bar_index + 10, tp1Val, "TP1 " + str.tostring(tp1Val, format.mintick), style=label.style_none, textcolor=tpColor1, size=size.small)
-    if useTP2 and not na(tp2Val)
-        fiboLine2618 := line.new(bar_index, tp2Val, bar_index + 1, tp2Val, color=tpColor2, width=2, style=line.style_dashed, extend=extend.right)
-        fiboLbl2618  := label.new(bar_index + 10, tp2Val, "TP2 " + str.tostring(tp2Val, format.mintick), style=label.style_none, textcolor=tpColor2, size=size.small)
-    if not na(entrySL)
-        slLineObj := line.new(bar_index, entrySL, bar_index + 1, entrySL, color=color.new(color.red, 0), width=2, style=line.style_solid, extend=extend.right)
-        slLblObj  := label.new(bar_index + 10, entrySL, "SL " + str.tostring(entrySL, format.mintick), style=label.style_none, textcolor=color.red, size=size.small)
+// Note: persistent entry/SL/TP1/TP2 lines + labels are drawn at entry bar by drawTradeMarkers()
+// in the order block above. They extend ~30 bars forward and are NOT deleted on exit, so the
+// user can see retrospectively where each trade entered, what its SL was, and where TP targets sat.
+
+// v2.6: ATR-based SL bands plotted on chart — every bar shows where Long/Short SL would be
+//       Long SL band  = low  − atrBufferMult × ATR (below price)
+//       Short SL band = high + atrBufferMult × ATR (above price)
+// Toggle via showAtrInfo input (same control as the corner table)
+plot(showAtrInfo ? low  - atrVal * atrBufferMult : na, title="Long SL band (ATR)",  color=color.new(color.lime, 50), style=plot.style_line, linewidth=1)
+plot(showAtrInfo ? high + atrVal * atrBufferMult : na, title="Short SL band (ATR)", color=color.new(color.red,  50), style=plot.style_line, linewidth=1)
+
+// v2.4: ATR info table at top-right corner — for visualizing current ATR + suggested SL distances
+var table atrInfoTable = na
+if showAtrInfo and barstate.islast
+    if not na(atrInfoTable)
+        table.delete(atrInfoTable)
+    atrInfoTable := table.new(position.top_right, 2, 4, bgcolor=color.new(color.black, 70), border_width=1)
+    table.cell(atrInfoTable, 0, 0, "ATR(" + str.tostring(atrLength) + ")", text_color=color.gray, text_size=size.small)
+    table.cell(atrInfoTable, 1, 0, str.tostring(atrVal, format.mintick), text_color=color.white, text_size=size.small)
+    table.cell(atrInfoTable, 0, 1, "0.5×ATR", text_color=color.gray, text_size=size.small)
+    table.cell(atrInfoTable, 1, 1, str.tostring(atrVal * 0.5, format.mintick), text_color=color.white, text_size=size.small)
+    table.cell(atrInfoTable, 0, 2, "Long SL @low−", text_color=color.gray, text_size=size.small)
+    table.cell(atrInfoTable, 1, 2, str.tostring(low - atrVal * atrBufferMult, format.mintick), text_color=color.lime, text_size=size.small)
+    table.cell(atrInfoTable, 0, 3, "Short SL @high+", text_color=color.gray, text_size=size.small)
+    table.cell(atrInfoTable, 1, 3, str.tostring(high + atrVal * atrBufferMult, format.mintick), text_color=color.red, text_size=size.small)
