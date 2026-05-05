@@ -194,7 +194,7 @@ if breakoutDown
 if breakoutUp
     labelColor = breakoutUpType == "PERFECT" ? color.lime : color.aqua
     labelText  = breakoutUpType == "PERFECT" ? "PERFECT\nBREAK UP" : "V-SHAPE\nBREAK UP"
-    label.new(bar_index, low, labelText, style=label.style_label_up, color=labelColor, textcolor=color.black, size=size.small)
+    // label.new(bar_index, low, labelText, style=label.style_label_up, color=labelColor, textcolor=color.black, size=size.small)
     if not na(resistanceLineObj)
         line.delete(resistanceLineObj)
         resistanceLineObj := na
@@ -203,7 +203,7 @@ if breakoutUp
 if breakoutDown
     labelColor = breakoutDownType == "PERFECT" ? color.orange : color.fuchsia
     labelText  = breakoutDownType == "PERFECT" ? "PERFECT\nBREAK DN" : "V-SHAPE\nBREAK DN"
-    label.new(bar_index, high, labelText, style=label.style_label_down, color=labelColor, textcolor=color.black, size=size.small)
+    // label.new(bar_index, high, labelText, style=label.style_label_down, color=labelColor, textcolor=color.black, size=size.small)
     if not na(supportLineObj)
         line.delete(supportLineObj)
         supportLineObj := na
@@ -691,3 +691,18 @@ plotshape(partialClosedShortThisBar, title="Short partial close", location=locat
 // ═══════════════════════════════════════════════════════════
 bgcolor(stochInOvb ? color.new(color.red, 95) : na, title="Stoch OVB Zone")
 bgcolor(stochInOvs ? color.new(color.green, 95) : na, title="Stoch OVS Zone")
+
+// ═══════════════════════════════════════════════════════════
+// EMA King (Added per user request)
+// ═══════════════════════════════════════════════════════════
+ema5 = ta.ema(close, 5)
+ema15 = ta.ema(close, 15)
+ema35 = ta.ema(close, 35)
+ema89 = ta.ema(close, 89)
+ema200 = ta.ema(close, 200)
+
+plot(ema5, title="EMA 5", color=color.new(color.red, 0), linewidth=1)
+plot(ema15, title="EMA 15", color=color.new(color.orange, 0), linewidth=1)
+plot(ema35, title="EMA 35", color=color.new(color.yellow, 0), linewidth=1)
+plot(ema89, title="EMA 89", color=color.new(#00BCD4, 0), linewidth=1) // Teal
+plot(ema200, title="EMA 200", color=color.new(color.blue, 0), linewidth=2)

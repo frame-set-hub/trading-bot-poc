@@ -199,6 +199,76 @@ If TP is on the wrong side of entry, RR is invalid and the setup is skipped.
 
 ---
 
+## 4.5 - Failed Pullback Pattern (Range-Edge Reversal)
+
+High-probability pattern that the basic flow misses. Happens when price tests a range edge, fails to break, and reverses with a Lower High (or Higher Low) on LTF.
+
+### Failed Pullback Short
+
+1. HTF range active, bias bearish (HTF/MTF trend down).
+2. Price touches HTF resistance and rejects, no breakout close.
+3. Price drops toward range mid or low.
+4. Price bounces back up but makes a Lower High vs prior swing high.
+5. LTF (5m/15m) Stoch peak is lower than previous Stoch peak = bearish divergence (`BEAR DIV Stoch > OVS` label).
+6. Entry trigger: LTF close below the low of the candle preceding the LTF reversal candle (mirror of `preSwingLowHigh`).
+7. SL = above the Lower High + small buffer.
+8. TP1 = range mid, TP2 = opposite range edge, TP3 = Fibo extension beyond the range.
+
+### Failed Pullback Long
+
+Mirror of the short:
+
+1. HTF range active, bias bullish.
+2. Price tests HTF support and rejects without breakdown close.
+3. Price rallies toward range mid or high.
+4. Price pulls back down but makes a Higher Low vs prior swing low.
+5. LTF Stoch trough higher than previous Stoch trough = bullish divergence.
+6. Entry trigger: LTF close above the high of the candle preceding the LTF reversal candle.
+7. SL = below the Higher Low + small buffer.
+8. TP1 = range mid, TP2 = opposite edge, TP3 = Fibo extension above the range.
+
+### Why this matters
+
+Standard breakout-pullback flow waits for breakout close AND a pullback that drives the oscillator back into OVB/OVS. In a range that fails to break, the standard flow never arms a setup, and the trade is missed. The Failed Pullback Pattern arms inside an unbroken range using LTF structure.
+
+### When to use this instead of breakout flow
+
+- Range edge has been respected at least twice without breakout close.
+- HTF (4H/1D) bias agrees with the fade direction.
+- LTF clearly shows Lower High / Higher Low formation.
+- Stoch divergence is present on the LTF that produced the lower-high / higher-low.
+
+---
+
+## 4.6 - Multi-Timeframe Reading Order
+
+When analyzing a chart, read top-down in this order:
+
+1. **1D / 4H** - macro phase, where is the dominant trend? Confirms bias.
+2. **1H** - active range, support/resistance, breakout status. Primary trade TF.
+3. **15m** - structural pivots inside the 1H structure. Provides LTF `swingHigh` / `swingLow` anchors.
+4. **5m** - precise entry trigger. Watches `BEAR DIV` / `BULL DIV` and structure break.
+
+### LTF Anchor Rule
+
+When the 1H setup is valid but the pullback is shallow (does not reach prior swing high or swing low), use the **15m swingHigh / swingLow** as the SL anchor instead of the 1H level.
+
+Effect:
+
+- SL distance shrinks dramatically.
+- RR can move from 3 to 5-15.
+- Trade-off: limit fill probability decreases. Plan with this in mind.
+
+### LTF Selection Guide
+
+| Use case | Primary trigger TF |
+|---|---|
+| Trend continuation entry inside HTF trend | 15m |
+| Range-edge fade with divergence | 5m for trigger, 15m for structure |
+| Failed Pullback Pattern | 15m for Lower High / Higher Low, 5m for divergence + entry |
+
+---
+
 ## 5. Bot Strategy State Machine
 
 This section maps chart analysis to Pine/bot logic.
@@ -465,6 +535,33 @@ Only add these if Phase 1 data shows the need:
 - HTF oscillator soft-exit:
   - If higher timeframe reaches OVB/OVS while trade is profitable, consider partial close.
 
+### Phase 2.5 - Range-Edge Fade and LTF Anchor
+
+Bridges Phase 1 (HTF-only breakout) and Phase 3 (full MTF). Driven by the
+discovery that the breakout flow misses Failed Pullback shorts/longs at
+range edges (see section 4.5).
+
+Add:
+
+- New state `RANGE_EDGE_WATCH`: activate when price touches HTF support or
+  resistance without breakout close, and HTF/MTF bias agrees with fading
+  the edge.
+- New states `LOWER_HIGH_WATCH` / `HIGHER_LOW_WATCH`: track failed pullback
+  formation on LTF after the edge has been rejected and price reverses.
+- Promote Stoch divergence from a visualization to an entry trigger when
+  the strategy is in `RANGE_EDGE_WATCH` or the lower-high / higher-low
+  watch states.
+- Use 15m `swingHigh` / `swingLow` as LTF SL anchor when the 1H setup is
+  valid but the pullback is shallow.
+
+Validation:
+
+- Build a missed-trade log from manual review and from v2 backtests.
+  Track shorts and longs that the breakout flow failed to catch because
+  the pullback never reached an oscillator extreme.
+- Implement Range-Edge Fade only if missed-trade log shows it would have
+  produced positive expectancy in the symbols listed in Phase 1.
+
 ### Phase 3 - MTF V-SHAPE Recovery
 
 Only if Phase 1/2 logs show meaningful V-SHAPE profits are being missed.
@@ -541,11 +638,20 @@ When reading a chart image, use this checklist.
 ### Visible Context
 
 - Symbol:
-- Timeframe:
+- Timeframe of the image:
+- Other TFs available for context (1D / 4H / 1H / 15m / 5m):
 - Current price:
 - Chart range visible:
 - Are RSI/Stoch panes visible?
 - Are strategy labels/Fibo lines visible?
+- Are divergence labels (`BEAR DIV`, `BULL DIV`) visible on LTF?
+
+### MTF Context (top-down)
+
+- 1D / 4H phase and dominant bias:
+- 1H phase, range, breakout status:
+- 15m structural pivots, last `swingHigh` / `swingLow`:
+- 5m latest divergence or structure break:
 
 ### Structure
 
@@ -556,15 +662,18 @@ When reading a chart image, use this checklist.
 - Last completed OVS price low:
 - Breakout direction:
 - Trend type:
+- Has the range edge been rejected without breakout? (check Failed Pullback)
 
 ### Pullback and Entry
 
 - Has post-breakout pullback happened?
 - Did Stoch touch the required zone?
-- Long `swingLow` / short `swingHigh`:
+- Long `swingLow` / short `swingHigh` (HTF):
+- LTF anchor pivot if HTF pullback is shallow:
 - Reversal trigger level:
 - Is trigger confirmed by close or only wick?
 - Is entry late?
+- Is this a Failed Pullback Pattern instead of a breakout setup?
 
 ### Risk and Trade Plan
 
@@ -591,36 +700,47 @@ When reading a chart image, use this checklist.
 When the user sends a chart screenshot, answer in this structure.
 
 ```text
+MTF Context:
+- 1D / 4H bias:
+- 1H phase:
+- 15m / 5m note:
+
 ภาพรวม:
 - Phase:
 - Direction bias:
 - Trade state:
+- Pattern: breakout-pullback / Failed Pullback / range-fade / none
 
 ระดับสำคัญ:
 - Support:
 - Resistance:
+- HTF swing anchor:
+- LTF anchor (15m swingHigh / swingLow):
 - Fibo head/end:
 - TP1/TP2:
 
 Setup:
 - Breakout:
 - Trend type:
-- Pullback:
+- Pullback (depth + Stoch reach):
+- Lower High / Higher Low (if Failed Pullback):
+- Divergence (BEAR / BULL DIV):
 - Reversal trigger:
 
 Risk:
 - Entry:
-- SL:
+- SL (HTF or LTF anchor):
 - RR:
 - Invalidation:
+- Fill probability vs RR trade-off note:
 
 สรุป:
 - Trade / Wait / Skip:
 - เหตุผล:
-- Bot rule ที่เกี่ยวข้อง:
+- Bot rule ที่เกี่ยวข้อง (current-bot or roadmap phase):
 ```
 
-Keep the answer practical. If levels are approximate because they come from an image, say they are approximate.
+Keep the answer practical. If levels are approximate because they come from an image, say they are approximate. When proposing a forced entry, always include at least one Limit alternative with better RR, plus the trade-off note.
 
 ---
 
@@ -673,3 +793,8 @@ Use these rules when uncertain:
 - If Fibo is destroyed and RSI reached extreme, reset.
 - If Fibo is destroyed and RSI did not reach extreme, consider broader Fibo shift in manual analysis.
 - If chart image lacks oscillator pane or enough history, state the limitation before giving a trade call.
+- Always read TF top-down: 1D, 4H, 1H, 15m, 5m. Never analyze a single TF in isolation.
+- If price tests an HTF range edge and rejects without breakout close, watch for the Failed Pullback Pattern (section 4.5) instead of waiting for breakout.
+- If LTF (5m / 15m) shows Stoch divergence at an HTF range edge with HTF bias agreeing, treat divergence as a primary entry signal in this context, not just supporting evidence.
+- If the pullback is shallow and does not return to the prior swing high or swing low, use the 15m `swingHigh` / `swingLow` as the SL anchor instead of the HTF level. RR improves at the cost of fill probability - state the trade-off when proposing the plan.
+- When proposing a forced "trade now" call, always offer at least one Limit alternative with better RR, plus the trade-off in fill probability, so the user can choose.

@@ -621,16 +621,30 @@ plot(showAtrInfo ? low  - atrVal * atrBufferMult : na, title="Long SL band (ATR)
 plot(showAtrInfo ? high + atrVal * atrBufferMult : na, title="Short SL band (ATR)", color=color.new(color.red,  50), style=plot.style_line, linewidth=1)
 
 // v2.4: ATR info table at top-right corner — for visualizing current ATR + suggested SL distances
-var table atrInfoTable = na
-if showAtrInfo and barstate.islast
-    if not na(atrInfoTable)
-        table.delete(atrInfoTable)
-    atrInfoTable := table.new(position.top_right, 2, 4, bgcolor=color.new(color.black, 70), border_width=1)
-    table.cell(atrInfoTable, 0, 0, "ATR(" + str.tostring(atrLength) + ")", text_color=color.gray, text_size=size.small)
-    table.cell(atrInfoTable, 1, 0, str.tostring(atrVal, format.mintick), text_color=color.white, text_size=size.small)
-    table.cell(atrInfoTable, 0, 1, "0.5×ATR", text_color=color.gray, text_size=size.small)
-    table.cell(atrInfoTable, 1, 1, str.tostring(atrVal * 0.5, format.mintick), text_color=color.white, text_size=size.small)
-    table.cell(atrInfoTable, 0, 2, "Long SL @low−", text_color=color.gray, text_size=size.small)
-    table.cell(atrInfoTable, 1, 2, str.tostring(low - atrVal * atrBufferMult, format.mintick), text_color=color.lime, text_size=size.small)
-    table.cell(atrInfoTable, 0, 3, "Short SL @high+", text_color=color.gray, text_size=size.small)
-    table.cell(atrInfoTable, 1, 3, str.tostring(high + atrVal * atrBufferMult, format.mintick), text_color=color.red, text_size=size.small)
+// v2.4: ATR info table at top-right corner (DISABLED by user request as it blocks the chart)
+// var table atrInfoTable = na
+// if showAtrInfo and barstate.islast
+//     if not na(atrInfoTable)
+//         table.delete(atrInfoTable)
+//     atrInfoTable := table.new(position.top_right, 2, 4, bgcolor=color.new(color.black, 70), border_width=1)
+//     table.cell(atrInfoTable, 0, 0, "ATR(" + str.tostring(atrLength) + ")", text_color=color.gray, text_size=size.small)
+//     table.cell(atrInfoTable, 1, 0, str.tostring(atrVal, format.mintick), text_color=color.white, text_size=size.small)
+//     table.cell(atrInfoTable, 0, 1, "0.5×ATR", text_color=color.gray, text_size=size.small)
+//     table.cell(atrInfoTable, 1, 1, str.tostring(atrVal * 0.5, format.mintick), text_color=color.white, text_size=size.small)
+//     table.cell(atrInfoTable, 0, 2, "Long SL @low−", text_color=color.gray, text_size=size.small)
+//     table.cell(atrInfoTable, 1, 2, str.tostring(low - atrVal * atrBufferMult, format.mintick), text_color=color.lime, text_size=size.small)
+//     table.cell(atrInfoTable, 0, 3, "Short SL @high+", text_color=color.gray, text_size=size.small)
+//     table.cell(atrInfoTable, 1, 3, str.tostring(high + atrVal * atrBufferMult, format.mintick), text_color=color.red, text_size=size.small)
+
+// === EMA King (Added per user request) ===
+ema5 = ta.ema(close, 5)
+ema15 = ta.ema(close, 15)
+ema35 = ta.ema(close, 35)
+ema89 = ta.ema(close, 89)
+ema200 = ta.ema(close, 200)
+
+plot(ema5, title="EMA 5", color=color.new(color.red, 0), linewidth=1)
+plot(ema15, title="EMA 15", color=color.new(color.orange, 0), linewidth=1)
+plot(ema35, title="EMA 35", color=color.new(color.yellow, 0), linewidth=1)
+plot(ema89, title="EMA 89", color=color.new(#00BCD4, 0), linewidth=1) // Teal
+plot(ema200, title="EMA 200", color=color.new(color.blue, 0), linewidth=2)
