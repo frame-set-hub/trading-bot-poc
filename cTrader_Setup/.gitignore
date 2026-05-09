@@ -1,0 +1,23 @@
+# Ignore build artifacts (binaries, debug symbols, cache)
+**/bin/
+**/obj/
+**/*.algo
+**/*.dll
+**/*.pdb
+**/*.deps.json
+**/*.cache
+**/*.nuget.*
+
+# Ignore cTrader specific logs and massive cache files
+cTrader/Journals/
+cTrader/.config/
+cTrader-bots/algos/data/
+
+# CRITICAL: Ignore all passwords and credentials
+**/password.txt
+**/*.pwd
+cTrader-bots/credentials/*
+!cTrader-bots/credentials/.gitkeep
+
+# Ignore macOS system files
+**/.DS_Store
